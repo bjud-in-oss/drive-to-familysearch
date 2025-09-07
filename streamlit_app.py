@@ -47,7 +47,7 @@ def reload_story_items():
         elif 'units' in result: st.session_state.story_items = result['units']
     st.rerun()
 
-# --- Applikationens Flöde ---
+# --- Applikationens Flöde (Början) ---
 st.set_page_config(layout="wide")
 st.title("Berättelsebyggaren")
 
@@ -73,12 +73,15 @@ if auth_code and st.session_state.drive_service is None:
         st.query_params.clear()
         st.rerun()
 
+# --- Huvudlayout ---
 if st.session_state.drive_service is None:
+    # Inloggningssida
     st.markdown("### Välkommen!")
     auth_url = get_auth_url()
     if auth_url: st.link_button("Logga in med Google", auth_url)
     else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
 else:
+    # Huvudapplikation
     col_main, col_sidebar = st.columns([3, 1])
 
     with col_sidebar:
@@ -148,8 +151,6 @@ else:
                                    reload_story_items()
                         else:
                             st.warning("Filnamn och innehåll får inte vara tomt.")
-            
-            # ... (Resten av verktygen kommer att läggas till här) ...
 
     with col_main:
         if st.session_state.story_items is None:
@@ -174,6 +175,8 @@ else:
                                 st.image(item['thumbnail'], width=100)
                             elif item.get('type') == 'pdf':
                                 st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                            elif item.get('type') == 'text' and 'content' in item:
+                                st.info(item.get('content'))
                             elif item.get('type') == 'text':
                                 st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
                         
