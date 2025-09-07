@@ -19,8 +19,7 @@ SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth'
 
-# --- Inloggningslogik ---
-
+# --- Inloggningslogik (Oförändrad) ---
 def get_auth_url():
     params = {'client_id': CLIENT_ID, 'redirect_uri': REDIRECT_URI, 'response_type': 'code', 'scope': ' '.join(SCOPES), 'access_type': 'offline', 'prompt': 'consent'}
     return AUTH_URI + '?' + urlencode(params)
@@ -30,11 +29,9 @@ def exchange_code_for_service(auth_code):
         token_data = {'code': auth_code, 'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET, 'redirect_uri': REDIRECT_URI, 'grant_type': 'authorization_code'}
         response = requests.post(TOKEN_URI, data=token_data)
         response.raise_for_status()
-        
         credentials_data = response.json()
         credentials_data['client_id'] = CLIENT_ID
         credentials_data['client_secret'] = CLIENT_SECRET
-
         credentials = Credentials.from_authorized_user_info(credentials_data, SCOPES)
         drive_service = build('drive', 'v3', credentials=credentials)
         return drive_service
@@ -43,17 +40,16 @@ def exchange_code_for_service(auth_code):
         return None
 
 # --- Applikationens Flöde ---
-
 st.set_page_config(layout="wide")
 st.title("Berättelsebyggaren")
 
 # Session state för att minnas tillstånd
 if 'drive_service' not in st.session_state: st.session_state.drive_service = None
 if 'user_email' not in st.session_state: st.session_state.user_email = None
-if 'path_history' not in st.session_state: st.session_state.path_history = []
-if 'current_folder_id' not in st.session_state: st.session_state.current_folder_id = 'root'
-if 'current_folder_name' not in st.session_state: st.session_state.current_folder_name = 'Min enhet / Delade enheter'
 if 'story_items' not in st.session_state: st.session_state.story_items = None
+if 'path_history' not in st.session_state: st.session_state.path_history = []
+if 'current_folder_id' not in st.session_state: st.session_state.current_folder_id = None
+if 'current_folder_name' not in st.session_state: st.session_state.current_folder_name = None
 
 # Hantera callback från Google
 auth_code = st.query_params.get('code')
@@ -74,38 +70,62 @@ if st.session_state.drive_service is None:
     auth_url = get_auth_url()
     if auth_url: st.link_button("Logga in med Google", auth_url)
     else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
-
 else:
-    # Användaren är inloggad! Visa filbläddraren.
+    # Användaren är inloggad!
     st.success(f"✅ Ansluten som: **{st.session_state.user_email}**")
     st.markdown("---")
-    st.markdown("### Välj din Källmapp")
-    
-    current_path_display = " / ".join([name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name])
-    st.write(f"**Nuvarande plats:** `{current_path_display}`")
 
-    col1, col2 = st.columns([1, 4])
-    with col1:
-        if st.button("⬅️ Gå upp") and st.session_state.path_history:
-            st.session_state.current_folder_id, st.session_state.current_folder_name = st.session_state.path_history.pop()
+    # Om vi inte har valt en startpunkt, visa "lobbyn"
+    if st.session_state.current_folder_id is None:
+        st.markdown("### Välj en startpunkt")
+        drives = pdf_motor.get_available_drives(st.session_state.drive_service)
+        if 'error' in drives:
+            st.error(drives['error'])
+        else:
+            for drive in sorted(drives, key=lambda x: x['name'].lower()):
+                icon = "📁" if drive['id'] == 'root' else "🏢"
+                if st.button(f"{icon} {drive['name']}", use_container_width=True):
+                    st.session_state.current_folder_id = drive['id']
+                    st.session_state.current_folder_name = drive['name']
+                    st.session_state.path_history = [] # Nollställ historiken
+                    st.rerun()
+
+    # Om vi har valt en startpunkt, visa filbläddraren
+    else:
+        st.markdown("### Välj din Källmapp")
+        
+        path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
+        current_path_display = " / ".join(path_parts)
+        st.write(f"**Nuvarande plats:** `{current_path_display}`")
+
+        col1, col2, col3 = st.columns([1, 1, 3])
+        # Knapp för att gå tillbaka till "lobbyn"
+        if col1.button("⬅️ Byt enhet"):
+            st.session_state.current_folder_id = None
+            st.session_state.current_folder_name = None
+            st.session_state.path_history = []
+            st.session_state.story_items = None
+            st.rerun()
+            
+        # Knapp för att gå upp en nivå
+        if col2.button("⬆️ Gå upp") and st.session_state.path_history:
+            prev_id, prev_name = st.session_state.path_history.pop()
+            st.session_state.current_folder_id = prev_id
+            st.session_state.current_folder_name = prev_name
             st.session_state.story_items = None
             st.rerun()
 
-        if st.button("✅ Välj denna mapp"):
+        if st.button("✅ Välj denna mapp", type="primary"):
             with st.spinner("Hämtar fillista..."):
                 result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
                 if 'error' in result: st.error(result['error'])
-                elif 'units' in result:
-                    st.session_state.story_items = result['units']
-
-    with col2:
+                elif 'units' in result: st.session_state.story_items = result['units']
+        
+        # Visa undermappar
         folders = pdf_motor.list_folders(st.session_state.drive_service, st.session_state.current_folder_id)
-        if 'error' in folders:
-            st.error(folders['error'])
+        if 'error' in folders: st.error(folders['error'])
         elif folders:
             for folder in sorted(folders, key=lambda x: x['name'].lower()):
-                # --- HÄR ÄR FIXEN ---
-                # Vi lägger till en unik 'key' baserad på mappens garanterat unika ID.
                 if st.button(f"📁 {folder['name']}", key=folder['id'], use_container_width=True):
                     st.session_state.path_history.append((st.session_state.current_folder_id, st.session_state.current_folder_name))
                     st.session_state.current_folder_id = folder['id']
@@ -115,11 +135,12 @@ else:
         else:
             st.write("Inga undermappar hittades.")
 
-    if st.session_state.story_items is not None:
-        st.markdown("---")
-        st.markdown("### Filer i den valda mappen:")
-        if not st.session_state.story_items:
-            st.info("Inga relevanta filer (bilder, txt, pdf) hittades i denna mapp.")
-        else:
-            for item in st.session_state.story_items:
-                st.write(f"- `{item['filename']}` (typ: {item['type']})")
+        # Visa fillistan om den har laddats
+        if st.session_state.story_items is not None:
+            st.markdown("---")
+            st.markdown("### Filer i den valda mappen:")
+            if not st.session_state.story_items:
+                st.info("Inga relevanta filer (bilder, txt, pdf) hittades i denna mapp.")
+            else:
+                for item in st.session_state.story_items:
+                    st.write(f"- `{item['filename']}`")
