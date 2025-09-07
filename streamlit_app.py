@@ -2,7 +2,6 @@ import streamlit as st
 import os
 import requests
 from urllib.parse import urlencode
-import re
 
 # Importera Googles bibliotek
 from google.oauth2.credentials import Credentials
@@ -15,7 +14,7 @@ import pdf_motor
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = st.secrets.get("APP_URL") 
-SCOPES = ['https://www.googleapis.com/auth/drive']
+SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth'
 
@@ -43,7 +42,7 @@ def exchange_code_for_service(auth_code):
 st.set_page_config(layout="wide")
 st.title("Berättelsebyggaren")
 
-# Session state – robust initialisering
+# Session state – initialisering
 def initialize_state():
     defaults = {
         'drive_service': None, 'user_email': None, 'story_items': None, 'path_history': [], 
@@ -76,14 +75,11 @@ if st.session_state.drive_service is None:
     if auth_url: st.link_button("Logga in med Google", auth_url)
     else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
 else:
-    # KORRIGERING: Definiera kolumnerna FÖRST
-    col_main, col_sidebar = st.columns([3, 1])
+    # HUVUDAPPLIKATION (Vertikal Layout)
+    st.success(f"✅ Ansluten som: **{st.session_state.user_email}**")
+    st.divider()
 
-    with col_sidebar:
-        st.markdown(f"**Ansluten som:**\n{st.session_state.user_email}")
-        st.divider()
-        st.markdown("### Välj Källmapp")
-        
+    with st.expander("📂 Välj Källmapp", expanded=True):
         if st.session_state.current_folder_id is None:
             drives = pdf_motor.get_available_drives(st.session_state.drive_service)
             if 'error' in drives: st.error(drives['error'])
@@ -97,11 +93,11 @@ else:
         else:
             path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
             st.write(f"**Plats:** `{' / '.join(path_parts)}`")
-            c1, c2 = st.columns(2)
-            if c1.button("⬅️ Byt enhet", use_container_width=True):
+            col1, col2 = st.columns(2)
+            if col1.button("⬅️ Byt enhet", use_container_width=True):
                 st.session_state.current_folder_id, st.session_state.path_history, st.session_state.story_items = None, [], None
                 st.rerun()
-            if c2.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
+            if col2.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
                 prev_id, prev_name = st.session_state.path_history.pop()
                 st.session_state.current_folder_id, st.session_state.current_folder_name = prev_id, prev_name
                 st.session_state.story_items = None
@@ -124,14 +120,12 @@ else:
                         st.session_state.story_items = None
                         st.rerun()
 
-    with col_main:
-        if st.session_state.story_items is None:
-            st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in filer...'")
+    # VISUELL LISTA
+    if st.session_state.story_items is not None:
+        st.divider()
+        st.markdown("### Berättelsens flöde")
+        if not st.session_state.story_items:
+            st.info("Inga relevanta filer hittades i denna mapp.")
         else:
-            st.markdown("---")
-            st.markdown("### Filer i den valda mappen:")
-            if not st.session_state.story_items:
-                st.info("Inga relevanta filer hittades i denna mapp.")
-            else:
-                for item in st.session_state.story_items:
-                    st.write(f"- `{item.get('filename', 'Okänt filnamn')}` (typ: {item.get('type')})")
+            for item in st.session_state.story_items:
+                st.write(f"- `{item.get('filename', 'Okänt filnamn')}` (typ: {item.get('type')})")
