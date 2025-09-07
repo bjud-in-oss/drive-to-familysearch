@@ -45,7 +45,6 @@ def load_story_order(service, folder_id):
     return None
 
 def save_story_order(service, folder_id, story_items):
-    """Sparar den nuvarande ordningen till projektfilen på Google Drive."""
     order_to_save = [item['filename'] for item in story_items]
     content = json.dumps({'order': order_to_save}, indent=2).encode('utf-8')
     fh = io.BytesIO(content)
@@ -55,8 +54,7 @@ def save_story_order(service, folder_id, story_items):
         response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, fields="files(id)").execute()
         existing_files = response.get('files', [])
         if existing_files:
-            file_id = existing_files[0]['id']
-            service.files().update(fileId=file_id, media_body=media_body, supportsAllDrives=True).execute()
+            service.files().update(fileId=existing_files[0]['id'], media_body=media_body, supportsAllDrives=True).execute()
         else:
             file_metadata = {'name': PROJECT_FILE_NAME, 'parents': [folder_id]}
             service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id').execute()
@@ -69,27 +67,38 @@ def get_content_units_from_folder(service, folder_id):
         query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
         items = results.get('files', [])
+        
+        # Skapa en mappning från filnamn till google-fil-objekt
         unit_map = {item.get('name'): item for item in items if item.get('name') != PROJECT_FILE_NAME}
         
         saved_order = load_story_order(service, folder_id)
-        final_units = []
-        if saved_order:
-            ordered_map = {filename: unit_map.pop(filename) for filename in saved_order if filename in unit_map}
-            final_units.extend(list(ordered_map.values()))
+        final_google_items = []
         
-        remaining_units = sorted(list(unit_map.values()), key=lambda x: x['filename'].lower())
-        final_units.extend(remaining_units)
+        # Om det finns en sparad ordning, bygg listan baserat på den
+        if saved_order:
+            # Plocka ut objekten i rätt ordning
+            ordered_map = {filename: unit_map.pop(filename) for filename in saved_order if filename in unit_map}
+            final_google_items.extend(list(ordered_map.values()))
+        
+        # Lägg till resterande (nya) filer i slutet, sorterade alfabetiskt
+        # FIX: Sortera baserat på 'name', inte 'filename'
+        remaining_items = sorted(list(unit_map.values()), key=lambda x: x.get('name', '').lower())
+        final_google_items.extend(remaining_items)
 
         # Konvertera från Google API-format till vårt interna format
         story_units = []
-        for item in final_units:
+        for item in final_google_items:
             filename = item.get('name')
             ext = os.path.splitext(filename)[1].lower()
             if ext in SUPPORTED_EXTENSIONS:
-                unit = {'filename': filename, 'id': item.get('id'), 'type': 'unknown', 'thumbnail': item.get('thumbnailLink')}
+                unit = {
+                    'filename': filename, 'id': item.get('id'), 'type': 'unknown',
+                    'thumbnail': item.get('thumbnailLink')
+                }
                 if ext in SUPPORTED_IMAGE_EXTENSIONS: unit['type'] = 'image'
                 elif ext in SUPPORTED_TEXT_EXTENSIONS: unit['type'] = 'text'
                 elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
                 story_units.append(unit)
         return {'units': story_units}
+            
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
