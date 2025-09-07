@@ -200,8 +200,8 @@ else:
             st.divider()
             st.markdown("### Inställningar & Publicering")
 
-            settings_quality = st.slider("Bildkvalitet (lägre = mindre filstorlek)", 10, 95, 85)
-            settings_max_size = st.number_input("Max filstorlek per PDF (MB)", min_value=1, max_value=100, value=15)
+            settings_quality = st.slider("Bildkvalitet (lägre = mindre filstorlek)", 10, 95, 85, key="quality_slider")
+            settings_max_size = st.number_input("Max filstorlek per PDF (MB)", min_value=1, max_value=100, value=15, key="max_size_input")
             
             if st.button("Skapa PDF-album 🚀", type="primary", use_container_width=True):
                 st.session_state.generated_pdfs = None 
@@ -212,18 +212,19 @@ else:
                 
                 settings = {'quality': settings_quality, 'max_size_mb': settings_max_size}
                 
-                with st.spinner("Genererar PDF-album... Detta kan ta flera minuter."):
-                    result = pdf_motor.generate_pdfs_from_story(
-                        st.session_state.drive_service,
-                        st.session_state.story_items,
-                        settings,
-                        update_progress
-                    )
+                result = pdf_motor.generate_pdfs_from_story(
+                    st.session_state.drive_service,
+                    st.session_state.story_items,
+                    settings,
+                    update_progress
+                )
                 
                 if 'error' in result:
                     st.error(result['error'])
                 elif 'pdfs' in result:
                     st.session_state.generated_pdfs = result['pdfs']
+                
+                progress_bar_area.empty() # Ta bort förloppsindikatorn när klar
 
             if 'generated_pdfs' in st.session_state and st.session_state.generated_pdfs:
                 st.success("Dina PDF-album är klara!")
