@@ -33,7 +33,7 @@ class PreciseFPDF(FPDF):
         self.multi_cell(content_width_mm, style.get('spacing', 6), text, align=style.get('align', 'J'))
 
 def parse_style_from_filename(filename):
-    """Hämtar stil-taggen från ett filnamn, t.ex. 'h1' från 'min_fil.h1.txt'."""
+    """Hämtar stil-taggen från ett filnamn."""
     stem = Path(filename).stem.lower()
     parts = stem.split('.')
     if len(parts) > 1 and Path(filename).suffix.lower() == '.txt':
@@ -204,11 +204,9 @@ def split_pdf_and_upload(service, file_id, original_filename, folder_id):
 # --- NY HUVUDFUNKTION FÖR PDF-GENERERING ---
 
 def generate_pdfs_from_story(service, story_items, settings, progress_callback):
-    """
-    Huvudfunktionen som bygger PDF-albumen.
-    """
-    doc_width_mm = 210  # Standard A4-bredd
-    margin_mm = 10     # Standardmarginal
+    """Huvudfunktionen som bygger PDF-albumen."""
+    doc_width_mm = 210
+    margin_mm = 10
     content_width_mm = doc_width_mm - (2 * margin_mm)
     max_size_bytes = settings.get('max_size_mb', 15) * 1024 * 1024
     quality = settings.get('quality', 85)
@@ -216,85 +214,73 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
     generated_pdfs = []
     current_pdf_writer = PdfWriter()
     items_in_current_pdf = 0
-
     total_items = len(story_items)
+
     for i, item in enumerate(story_items):
         progress_callback(i / total_items, f"Bearbetar {item['filename']}...")
-        
         content_buffer = download_file_content(service, item['id'])
-        if not content_buffer:
-            continue # Hoppa över filer som inte kunde laddas ner
+        if not content_buffer: continue
 
-        # Skapa en temporär PDF-sida för det nya innehållet
         page_writer = PdfWriter()
         
-        if item['type'] == 'image':
-            with Image.open(content_buffer) as img:
-                img_w, img_h = img.size
-                aspect_ratio = img_h / img_w
-                img_height_mm = content_width_mm * aspect_ratio
-                page_height_mm = img_height_mm + (2 * margin_mm)
+        try:
+            if item['type'] == 'image':
+                with Image.open(content_buffer) as img:
+                    img_w, img_h = img.size
+                    aspect_ratio = img_h / img_w
+                    img_height_mm = content_width_mm * aspect_ratio
+                    page_height_mm = img_height_mm + (2 * margin_mm)
+                    
+                    temp_page_pdf = FPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
+                    temp_page_pdf.add_page()
+                    img_byte_arr = io.BytesIO()
+                    img.convert('RGB').save(img_byte_arr, format='JPEG', quality=quality)
+                    temp_page_pdf.image(img_byte_arr, x=margin_mm, y=margin_mm, w=content_width_mm)
+                    
+                    with io.BytesIO(temp_page_pdf.output()) as f:
+                        page_writer.add_page(PdfReader(f).pages[0])
+
+            elif item['type'] == 'text':
+                text_content = content_buffer.read().decode('utf-8')
+                style = STYLES.get(parse_style_from_filename(item['filename']), STYLES['p'])
                 
-                temp_page_pdf = FPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
+                temp_calc_pdf = FPDF('P', 'mm', 'A4'); temp_calc_pdf.add_page()
+                temp_calc_pdf.set_font(style.get('font'), style.get('style'), style.get('size'))
+                lines = temp_calc_pdf.multi_cell(w=content_width_mm, h=style.get('spacing'), text=text_content, dry_run=True, output='LINES')
+                text_height_mm = len(lines) * style.get('spacing')
+                page_height_mm = text_height_mm + (2 * margin_mm)
+
+                temp_page_pdf = PreciseFPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
                 temp_page_pdf.add_page()
-                # Komprimera bilden för att spara plats
-                img_byte_arr = io.BytesIO()
-                img.convert('RGB').save(img_byte_arr, format='JPEG', quality=quality)
-                temp_page_pdf.image(img_byte_arr, x=margin_mm, y=margin_mm, w=content_width_mm)
+                temp_page_pdf.set_xy(margin_mm, margin_mm)
+                temp_page_pdf.add_styled_text(text_content, style, content_width_mm)
                 
                 with io.BytesIO(temp_page_pdf.output()) as f:
                     page_writer.add_page(PdfReader(f).pages[0])
-
-        elif item['type'] == 'text':
-            text_content = content_buffer.read().decode('utf-8')
-            style_key = parse_style_from_filename(item['filename'])
-            style = STYLES.get(style_key, STYLES['p'])
             
-            # Beräkna höjd
-            temp_calc_pdf = FPDF('P', 'mm', 'A4')
-            temp_calc_pdf.add_page()
-            temp_calc_pdf.set_font(style.get('font'), style.get('style'), style.get('size'))
-            lines = temp_calc_pdf.multi_cell(w=content_width_mm, h=style.get('spacing'), text=text_content, dry_run=True, output='LINES')
-            text_height_mm = len(lines) * style.get('spacing')
-            page_height_mm = text_height_mm + (2 * margin_mm)
-
-            temp_page_pdf = PreciseFPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
-            temp_page_pdf.add_page()
-            temp_page_pdf.set_xy(margin_mm, margin_mm)
-            temp_page_pdf.add_styled_text(text_content, style, content_width_mm)
-            
-            with io.BytesIO(temp_page_pdf.output()) as f:
-                page_writer.add_page(PdfReader(f).pages[0])
-        
-        # Om vi har en ny sida att lägga till
-        if len(page_writer.pages) > 0:
-            # Kontrollera storlek INNAN vi lägger till sidan
-            test_writer = PdfWriter()
-            for page in current_pdf_writer.pages:
-                test_writer.add_page(page)
-            test_writer.add_page(page_writer.pages[0])
-            
-            with io.BytesIO() as temp_buffer:
-                test_writer.write(temp_buffer)
-                current_size = temp_buffer.tell()
-
-            # Om filen blir för stor, eller om det är den första filen men den är för stor i sig
-            if current_size > max_size_bytes and items_in_current_pdf > 0:
-                # Spara den gamla PDF:en
-                final_pdf_buffer = io.BytesIO()
-                current_pdf_writer.write(final_pdf_buffer)
-                final_pdf_buffer.seek(0)
-                generated_pdfs.append(final_pdf_buffer)
+            if len(page_writer.pages) > 0:
+                test_writer = PdfWriter()
+                for page in current_pdf_writer.pages: test_writer.add_page(page)
+                test_writer.add_page(page_writer.pages[0])
                 
-                # Starta en ny PDF med den nuvarande sidan
-                current_pdf_writer = page_writer
-                items_in_current_pdf = 1
-            else:
-                # Lägg till sidan i den nuvarande PDF:en
-                current_pdf_writer.add_page(page_writer.pages[0])
-                items_in_current_pdf += 1
+                with io.BytesIO() as temp_buffer:
+                    test_writer.write(temp_buffer)
+                    current_size = temp_buffer.tell()
 
-    # Spara den sista PDF:en om den innehåller något
+                if current_size > max_size_bytes and items_in_current_pdf > 0:
+                    final_pdf_buffer = io.BytesIO()
+                    current_pdf_writer.write(final_pdf_buffer)
+                    final_pdf_buffer.seek(0)
+                    generated_pdfs.append(final_pdf_buffer)
+                    
+                    current_pdf_writer = page_writer
+                    items_in_current_pdf = 1
+                else:
+                    current_pdf_writer.add_page(page_writer.pages[0])
+                    items_in_current_pdf += 1
+        except Exception as e:
+            print(f"Kunde inte bearbeta {item['filename']}: {e}")
+
     if items_in_current_pdf > 0:
         final_pdf_buffer = io.BytesIO()
         current_pdf_writer.write(final_pdf_buffer)
