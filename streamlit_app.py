@@ -14,7 +14,7 @@ import pdf_motor
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = st.secrets.get("APP_URL") 
-SCOPES = ['https://www.googleapis.com/auth/drive.readonly'] # Återställt till readonly
+SCOPES = ['https://www.googleapis.com/auth/drive']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth'
 
@@ -127,14 +127,31 @@ else:
     st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
     
     # Om organiserings-läget är aktivt, visa verktygspanelen
-    if st.session_state.organize_mode:
-        with st.sidebar:
-            st.divider()
-            st.markdown("### Verktyg")
-            # Logik för att räkna valda rader (kommer användas mer senare)
-            selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
-            st.info(f"{len(selected_indices)} objekt valda.")
-            # Fler knappar (Ta bort, Klipp ut etc.) kommer att läggas till här i nästa steg.
+          if st.session_state.organize_mode:
+            with st.sidebar:
+                st.divider()
+                st.markdown("### Verktyg")
+                
+                # Läs av vilka rader som är valda från kryssrutorna
+                st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
+                
+                st.info(f"{len(st.session_state.selected_indices)} objekt valda.")
+
+                # NY KNAPP OCH LOGIK:
+                if st.button("Ta bort valda 🗑️", type="primary", disabled=not st.session_state.selected_indices, use_container_width=True):
+                    # Sortera index i omvänd ordning för att undvika att förstöra listan när vi tar bort
+                    indices_to_remove = sorted(list(st.session_state.selected_indices), reverse=True)
+                    
+                    for i in indices_to_remove:
+                        # Rensa checkbox-minnet för det borttagna objektet
+                        st.session_state[f"select_{st.session_state.story_items[i]['id']}"] = False
+                        # Ta bort objektet från huvudlistan
+                        del st.session_state.story_items[i]
+                    
+                    # Nollställ urvalet och spara den nya ordningen
+                    st.session_state.selected_indices = set()
+                    pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                    st.rerun()
 
 
     st.markdown("---")
