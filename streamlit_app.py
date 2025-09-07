@@ -68,4 +68,43 @@ def exchange_code_for_service(auth_code):
         st.error(f"Ett fel inträffade vid inloggning: {e}")
         return None
 
-# HÄR SLUTAR DEL 2
+# --- Applikationens Flöde, Del 2: Gränssnittet ---
+
+# Hantera callback från Google (när användaren skickas tillbaka efter inloggning)
+auth_code = st.query_params.get('code')
+if auth_code and st.session_state.drive_service is None:
+    with st.spinner("Verifierar inloggning..."):
+        st.session_state.drive_service = exchange_code_for_service(auth_code)
+        if st.session_state.drive_service:
+            try:
+                user_info = st.session_state.drive_service.about().get(fields='user').execute()
+                st.session_state.user_email = user_info['user']['emailAddress']
+            except Exception:
+                st.session_state.user_email = "Okänd"
+        # Rensa bort koden från URL:en för att undvika att den körs igen
+        st.query_params.clear()
+        st.rerun()
+
+# Huvudlogik: Visa antingen inloggningssidan eller huvudsidan
+if st.session_state.drive_service is None:
+    # Användaren är INTE inloggad
+    st.markdown("### Välkommen!")
+    st.markdown("För att börja, anslut ditt Google Drive-konto.")
+    
+    auth_url = get_auth_url()
+    if auth_url:
+        st.link_button("Logga in med Google", auth_url)
+    else:
+        st.error("Fel: Appen saknar konfiguration. GOOGLE_CLIENT_ID och GOOGLE_CLIENT_SECRET måste ställas in i 'Secrets'.")
+
+else:
+    # Användaren ÄR inloggad!
+    if st.session_state.user_email:
+        st.success(f"✅ Du är nu ansluten till Google Drive som: **{st.session_state.user_email}**")
+    else:
+        st.warning("✅ Ansluten till Google Drive (kunde inte verifiera användarnamn).")
+    
+    st.markdown("---")
+    st.info("I nästa steg bygger vi filbläddraren här.")
+
+# HÄR SLUTAR DEL 3
