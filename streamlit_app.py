@@ -42,6 +42,7 @@ def exchange_code_for_service(auth_code):
 # --- Applikationens Flöde ---
 st.set_page_config(layout="wide")
 st.title("Berättelsebyggaren")
+st.caption("Version 1.1 - Buggfix för mappsortering") # Visuell bekräftelse
 
 # Session state – robust initialisering
 def initialize_state():
