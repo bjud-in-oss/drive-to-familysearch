@@ -37,15 +37,10 @@ MM_TO_PT = 2.83465
 
 
 # Standardstilar (kan göras redigerbara i en framtida fas)
-
 STYLES = {
-
-    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
-
-    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
-
-    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
-
+    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
+    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
+    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
 }
 
 
