@@ -6,6 +6,7 @@ from urllib.parse import urlencode
 # Importera Googles bibliotek
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 
 # Importera vår motor
 import pdf_motor
@@ -13,7 +14,6 @@ import pdf_motor
 # --- Konfiguration ---
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
-# Appens URL läses nu från Streamlit Clouds secrets
 REDIRECT_URI = st.secrets.get("APP_URL")
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
@@ -42,11 +42,20 @@ def exchange_code_for_service(auth_code):
         response = requests.post(TOKEN_URI, data=token_data)
         response.raise_for_status()
         
-        credentials = Credentials.from_authorized_user_info(response.json(), SCOPES)
+        credentials_data = response.json()
+        
+        # --- HÄR ÄR FIXEN ---
+        # Lägg till client_id och client_secret i datan, vilket funktionen förväntar sig.
+        credentials_data['client_id'] = CLIENT_ID
+        credentials_data['client_secret'] = CLIENT_SECRET
+        # --- SLUT PÅ FIXEN ---
+
+        credentials = Credentials.from_authorized_user_info(credentials_data, SCOPES)
         drive_service = build('drive', 'v3', credentials=credentials)
         return drive_service
     except Exception as e:
         st.error(f"Ett fel inträffade vid inloggning: {e}")
+        st.error(f"Rådata från Google: {response.text}") # Lägger till extra felsökning
         return None
 
 # --- Applikationens Flöde ---
@@ -57,12 +66,20 @@ st.title("Berättelsebyggaren")
 # Använd Streamlits "session state" för att minnas tillstånd
 if 'drive_service' not in st.session_state:
     st.session_state.drive_service = None
+if 'user_email' not in st.session_state:
+    st.session_state.user_email = None
 
 # Hantera callback från Google
 auth_code = st.query_params.get('code')
 if auth_code and st.session_state.drive_service is None:
     with st.spinner("Verifierar inloggning..."):
         st.session_state.drive_service = exchange_code_for_service(auth_code)
+        if st.session_state.drive_service:
+            try:
+                user_info = st.session_state.drive_service.about().get(fields='user').execute()
+                st.session_state.user_email = user_info['user']['emailAddress']
+            except Exception:
+                st.session_state.user_email = "Okänd (timeout)"
         st.query_params.clear()
 
 # Visa antingen inloggningssidan eller huvudsidan
@@ -78,7 +95,11 @@ if st.session_state.drive_service is None:
 
 else:
     # Användaren är inloggad!
-    st.success("✅ Du är nu ansluten till Google Drive!")
+    if st.session_state.user_email:
+        st.success(f"✅ Ansluten till Google Drive som: **{st.session_state.user_email}**")
+    else:
+        st.warning("✅ Ansluten till Google Drive (kunde inte verifiera användarnamn).")
+    
     st.markdown("---")
     st.markdown("### Välj din Källmapp")
     
