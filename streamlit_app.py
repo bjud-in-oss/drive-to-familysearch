@@ -1,3 +1,4 @@
+import pdf_motor
 import streamlit as st
 
 st.title("Test av Grund-app")
