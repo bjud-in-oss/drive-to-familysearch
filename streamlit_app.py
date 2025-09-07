@@ -42,7 +42,7 @@ def exchange_code_for_service(auth_code):
 # --- Applikationens Flöde ---
 st.set_page_config(layout="wide")
 st.title("Berättelsebyggaren")
-st.caption("Version 1.1 - Buggfix för mappsortering") # Visuell bekräftelse
+st.caption("Version 1.2 - Robust sortering") 
 
 # Session state – robust initialisering
 def initialize_state():
@@ -88,11 +88,11 @@ else:
                 drives = pdf_motor.get_available_drives(st.session_state.drive_service)
                 if 'error' in drives: st.error(drives['error'])
                 else:
-                    # KORRIGERAD RAD: Sorterar nu efter 'name'
-                    for drive in sorted(drives, key=lambda x: x['name'].lower()):
-                        icon = "📁" if drive['id'] == 'root' else "🏢"
-                        if st.button(f"{icon} {drive['name']}", use_container_width=True, key=drive['id']):
-                            st.session_state.current_folder_id, st.session_state.current_folder_name = drive['id'], drive['name']
+                    # FIX: En säkrare sortering med .get() som skyddar mot saknade 'name'-nycklar
+                    for drive in sorted(drives, key=lambda x: x.get('name', '').lower()):
+                        icon = "📁" if drive.get('id') == 'root' else "🏢"
+                        if st.button(f"{icon} {drive.get('name', 'Okänd enhet')}", use_container_width=True, key=drive.get('id')):
+                            st.session_state.current_folder_id, st.session_state.current_folder_name = drive.get('id'), drive.get('name')
                             st.session_state.path_history = []
                             st.rerun()
             else:
@@ -120,11 +120,11 @@ else:
                 if 'error' in folders: st.error(folders['error'])
                 elif folders:
                     st.markdown("*Undermappar:*")
-                    # KORRIGERAD RAD: Sorterar nu efter 'name'
-                    for folder in sorted(folders, key=lambda x: x['name'].lower()):
-                        if st.button(f"📁 {folder['name']}", key=folder['id'], use_container_width=True):
+                    # FIX: En säkrare sortering med .get() som skyddar mot saknade 'name'-nycklar
+                    for folder in sorted(folders, key=lambda x: x.get('name', '').lower()):
+                        if st.button(f"📁 {folder.get('name', 'Okänd mapp')}", key=folder.get('id'), use_container_width=True):
                             st.session_state.path_history.append((st.session_state.current_folder_id, st.session_state.current_folder_name))
-                            st.session_state.current_folder_id, st.session_state.current_folder_name = folder['id'], folder['name']
+                            st.session_state.current_folder_id, st.session_state.current_folder_name = folder.get('id'), folder.get('name')
                             st.session_state.story_items = None
                             st.rerun()
         except Exception as e:
@@ -152,9 +152,9 @@ else:
                     cols = [1, 5]
                     col_list = st.columns(cols)
                     with col_list[0]:
-                        if item['type'] == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
-                        elif item['type'] == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-                        elif item['type'] == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                        if item.get('type') == 'image' and item.get('thumbnail'): st.image(item.get('thumbnail'), width=100)
+                        elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                        elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
                     with col_list[1]:
-                        st.write(item['filename'])
+                        st.write(item.get('filename', 'Okänt filnamn'))
                 st.divider()
