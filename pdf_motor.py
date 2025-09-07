@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 from googleapiclient.errors import HttpError
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
 import json
 
@@ -27,15 +28,13 @@ def list_folders(service, folder_id='root'):
     except HttpError as e: return {'error': f"Kunde inte hämta mappar: {e}"}
 
 def load_story_order(service, folder_id):
-    """Letar efter en projektfil och returnerar den sparade ordningen."""
     try:
         query = f"'{folder_id}' in parents and name = '{PROJECT_FILE_NAME}' and trashed = false"
-        response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True).execute()
+        response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, fields="files(id)").execute()
         files = response.get('files', [])
         if files:
             request = service.files().get_media(fileId=files[0]['id'])
             fh = io.BytesIO()
-            downloader = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
             while done is False:
@@ -46,25 +45,41 @@ def load_story_order(service, folder_id):
     return None
 
 def save_story_order(service, folder_id, story_items):
-    """Sparar den nuvarande ordningen till projektfilen."""
-    # Spara endast en lista av filnamn, för att hålla filen liten
+    """Sparar den nuvarande ordningen till projektfilen på Google Drive."""
     order_to_save = [item['filename'] for item in story_items]
-    content = json.dumps({'order': order_to_save}).encode('utf-8')
+    content = json.dumps({'order': order_to_save}, indent=2).encode('utf-8')
     fh = io.BytesIO(content)
+    media_body = MediaIoBaseUpload(fh, mimetype='application/json')
     
-    #... (Logik för att ladda upp/uppdatera filen kommer i en senare fas)
-    print("Simulerar sparande av projektfil...")
-    return True
+    try:
+        # Kolla om filen redan finns
+        query = f"'{folder_id}' in parents and name = '{PROJECT_FILE_NAME}' and trashed = false"
+        response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, fields="files(id)").execute()
+        existing_files = response.get('files', [])
+        
+        if existing_files:
+            # Uppdatera befintlig fil
+            file_id = existing_files[0]['id']
+            service.files().update(fileId=file_id, media_body=media_body, supportsAllDrives=True).execute()
+            print(f"Projektfil uppdaterad (ID: {file_id})")
+        else:
+            # Skapa ny fil
+            file_metadata = {'name': PROJECT_FILE_NAME, 'parents': [folder_id]}
+            file = service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id').execute()
+            print(f"Projektfil skapad (ID: {file.get('id')})")
+        return {'success': True}
+    except HttpError as e:
+        return {'error': f"Kunde inte spara projektfilen: {e}"}
+
 
 def get_content_units_from_folder(service, folder_id):
     all_units = []
     try:
-        # Hämta alla filer i mappen
         query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
         items = results.get('files', [])
         
-        # Filtrera bort de som inte stöds
+        unit_map = {}
         for item in items:
             filename = item.get('name')
             ext = os.path.splitext(filename)[1].lower()
@@ -73,22 +88,16 @@ def get_content_units_from_folder(service, folder_id):
                 if ext in SUPPORTED_IMAGE_EXTENSIONS: unit['type'] = 'image'
                 elif ext in SUPPORTED_TEXT_EXTENSIONS: unit['type'] = 'text'
                 elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
-                all_units.append(unit)
+                unit_map[filename] = unit
         
-        # Ladda den sparade ordningen
         saved_order = load_story_order(service, folder_id)
         if saved_order:
-            # Skapa en mappning från filnamn till enhet för snabb sortering
-            unit_map = {unit['filename']: unit for unit in all_units}
-            # Bygg den sorterade listan
             sorted_units = [unit_map[filename] for filename in saved_order if filename in unit_map]
-            # Lägg till eventuella nya filer (som inte fanns i projektfilen) i slutet
             new_files = [unit for filename, unit in unit_map.items() if filename not in saved_order]
             sorted_units.extend(sorted(new_files, key=lambda x: x['filename'].lower()))
             return {'units': sorted_units}
         else:
-            # Om ingen sparad ordning finns, sortera alfabetiskt
-            all_units.sort(key=lambda x: x['filename'].lower())
-            return {'units': all_units}
+            sorted_units = sorted(list(unit_map.values()), key=lambda x: x['filename'].lower())
+            return {'units': sorted_units}
             
-    except HttpError as e: return {'error': f"Kunde inte hämta filer från Google Drive: {e}"}
+    except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
