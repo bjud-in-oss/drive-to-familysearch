@@ -1,38 +1,30 @@
 import os
-
 from pathlib import Path
-
 from googleapiclient.errors import HttpError
-
-from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
-
 import io
-
 import json
-
-import re
-
 from pypdf import PdfReader, PdfWriter
-
-from fpdf import FPDF, XPos, YPos
-
+from fpdf import FPDF
 from PIL import Image
 
-
-
 # Konfiguration
-
 SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
-
 SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
-
 SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
-
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
-
 PROJECT_FILE_NAME = '.storyproject.json'
-
 MM_TO_PT = 2.83465
+
+
+def get_available_drives(service):
+    drives = [{'id': 'root', 'name': 'Min enhet'}]
+    try:
+        response = service.drives().list().execute()
+        drives.extend(response.get('drives', []))
+        return drives
+    except HttpError as e:
+        return {'error': f"Kunde inte hämta lista på enheter: {e}"}
+
 
 
 
