@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import requests
 from urllib.parse import urlencode
+import re
 
 # Importera Googles bibliotek
 from google.oauth2.credentials import Credentials
@@ -14,12 +15,11 @@ import pdf_motor
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = st.secrets.get("APP_URL") 
-# VIKTIG ÄNDRING: Vi behöver nu fulla rättigheter för att kunna spara projektfilen
-SCOPES = ['https://www.googleapis.com/auth/drive'] 
+SCOPES = ['https://www.googleapis.com/auth/drive']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth'
 
-# --- Inloggningslogik ---
+# --- Inloggningslogik (Oförändrad) ---
 def get_auth_url():
     params = {'client_id': CLIENT_ID, 'redirect_uri': REDIRECT_URI, 'response_type': 'code', 'scope': ' '.join(SCOPES), 'access_type': 'offline', 'prompt': 'consent'}
     return AUTH_URI + '?' + urlencode(params)
@@ -78,15 +78,15 @@ if st.session_state.drive_service is None:
     if auth_url: st.link_button("Logga in med Google", auth_url)
     else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
 else:
-    # Huvudapplikation med sidopanel
-    with st.sidebar:
+    col_main, col_sidebar = st.columns([3, 1])
+
+    with col_sidebar:
         st.markdown(f"**Ansluten som:**\n{st.session_state.user_email}")
         st.divider()
-        
-        # FILBLÄDDRARE
         st.markdown("### Välj Källmapp")
+        
+        # FILBLÄDDRARE (oförändrad)
         if st.session_state.current_folder_id is None:
-            # ... (Lobby-vy för att välja enhet)
             drives = pdf_motor.get_available_drives(st.session_state.drive_service)
             if 'error' in drives: st.error(drives['error'])
             else:
@@ -97,27 +97,22 @@ else:
                         st.session_state.path_history = []
                         st.rerun()
         else:
-            # Vy för att bläddra i mappar
             path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
             st.write(f"**Plats:** `{' / '.join(path_parts)}`")
-            col1, col2 = st.columns(2)
-            with col1:
-                if st.button("⬅️ Byt enhet", use_container_width=True):
-                    st.session_state.current_folder_id, st.session_state.path_history, st.session_state.story_items = None, [], None
-                    st.rerun()
-            with col2:
-                if st.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
-                    prev_id, prev_name = st.session_state.path_history.pop()
-                    st.session_state.current_folder_id, st.session_state.current_folder_name = prev_id, prev_name
-                    st.session_state.story_items = None
-                    st.rerun()
-
+            c1, c2 = st.columns(2)
+            if c1.button("⬅️ Byt enhet", use_container_width=True):
+                st.session_state.current_folder_id, st.session_state.path_history, st.session_state.story_items = None, [], None
+                st.rerun()
+            if c2.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
+                prev_id, prev_name = st.session_state.path_history.pop()
+                st.session_state.current_folder_id, st.session_state.current_folder_name = prev_id, prev_name
+                st.session_state.story_items = None
+                st.rerun()
             if st.button("✅ Läs in denna mapp", type="primary", use_container_width=True):
                 with st.spinner("Hämtar fillista..."):
                     result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
                     if 'error' in result: st.error(result['error'])
                     elif 'units' in result: st.session_state.story_items = result['units']
-            
             folders = pdf_motor.list_folders(st.session_state.drive_service, st.session_state.current_folder_id)
             if 'error' in folders: st.error(folders['error'])
             elif folders:
@@ -128,51 +123,67 @@ else:
                         st.session_state.current_folder_id, st.session_state.current_folder_name = folder.get('id'), folder.get('name')
                         st.session_state.story_items = None
                         st.rerun()
-
-    # HUVUDFÖNSTER
-    if st.session_state.story_items is None:
-        st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in denna mapp'.")
-    else:
-        st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
         
-        # VERKTYGSPANEL (VISAS BARA I ORGANISERA-LÄGE)
-        if st.session_state.organize_mode:
-            with st.sidebar:
-                st.divider()
-                st.markdown("### Verktyg")
-                
-                selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
-                
-                st.info(f"{len(selected_indices)} objekt valda.")
+        # VERKTYG FÖR ORGANISERING
+        if st.session_state.story_items is not None and st.session_state.organize_mode:
+            st.divider()
+            st.markdown("### Verktyg")
+            st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
+            st.info(f"{len(st.session_state.selected_indices)} objekt valda.")
 
-                if st.button("Ta bort valda 🗑️", type="primary", disabled=not selected_indices, use_container_width=True):
-                    indices_to_remove = sorted(list(selected_indices), reverse=True)
-                    for i in indices_to_remove:
+            # --- NY KOD FÖR KLIPP UT & KLISTRA IN ---
+            tool_cols = st.columns(2)
+            with tool_cols[0]:
+                if st.button("Klipp ut valda 📤", disabled=not st.session_state.selected_indices, use_container_width=True):
+                    st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(list(st.session_state.selected_indices))]
+                    for i in sorted(list(st.session_state.selected_indices), reverse=True):
                         del st.session_state.story_items[i]
-                    
-                    # Rensa urval och spara
-                    for i in selected_indices: st.session_state[f"select_{st.session_state.story_items[i]['id']}"]=False
+                    for i in range(len(st.session_state.story_items) + 10): st.session_state[f"select_{i}"]=False # Rensa gamla checkbox-värden
+                    st.session_state.selected_indices = set()
                     pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                     st.rerun()
+            
+            with tool_cols[1]:
+                if st.button("Klistra in överst 📥", disabled=not st.session_state.clipboard, use_container_width=True):
+                    st.session_state.story_items = st.session_state.clipboard + st.session_state.story_items
+                    st.session_state.clipboard = []
+                    pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                    st.rerun()
+            
+            if st.session_state.clipboard:
+                st.success(f"{len(st.session_state.clipboard)} objekt i urklipp.")
+            # --- SLUT PÅ NY KOD ---
+            
+            if st.button("Ta bort valda 🗑️", type="primary", disabled=not st.session_state.selected_indices, use_container_width=True):
+                indices_to_remove = sorted(list(st.session_state.selected_indices), reverse=True)
+                for i in indices_to_remove:
+                    st.session_state[f"select_{st.session_state.story_items[i]['id']}"] = False
+                    del st.session_state.story_items[i]
+                st.session_state.selected_indices = set()
+                pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                st.rerun()
 
-        st.markdown("---")
-        st.markdown("### Berättelsens flöde")
-        if not st.session_state.story_items:
-            st.info("Inga relevanta filer hittades i denna mapp.")
+    with col_main:
+        # HUVUDFÖNSTER (VISUELL LISTA)
+        if st.session_state.story_items is None:
+            st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in denna mapp'.")
         else:
-            for i, item in enumerate(st.session_state.story_items):
-                with st.container():
-                    cols = [1, 10] if not st.session_state.organize_mode else [0.5, 1, 10]
-                    col_list = st.columns(cols)
-                    
-                    if st.session_state.organize_mode:
-                        col_list[0].checkbox("", key=f"select_{item['id']}")
-
-                    with col_list[-2]:
-                        if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
-                        elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-                        elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
-                    
-                    with col_list[-1]:
-                        st.write(item.get('filename', 'Okänt filnamn'))
-                st.divider()
+            st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
+            st.markdown("---")
+            st.markdown("### Berättelsens flöde")
+            if not st.session_state.story_items:
+                st.info("Inga filer att visa.")
+            else:
+                for i, item in enumerate(st.session_state.story_items):
+                    with st.container():
+                        cols = [1, 10] if not st.session_state.organize_mode else [0.5, 1, 10]
+                        col_list = st.columns(cols)
+                        if st.session_state.organize_mode:
+                            col_list[0].checkbox("", key=f"select_{item['id']}")
+                        with col_list[-2]:
+                            if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
+                            elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                            elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                        with col_list[-1]:
+                            st.write(item.get('filename', 'Okänt filnamn'))
+                    st.divider()
