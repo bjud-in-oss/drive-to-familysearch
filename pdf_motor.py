@@ -6,13 +6,14 @@ import io
 import json
 from pypdf import PdfReader, PdfWriter
 
-# Konfiguration
+# Konfiguration (oförändrad)
 SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
 SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
 PROJECT_FILE_NAME = '.storyproject.json'
 
+# Funktioner för att hantera enheter, mappar och projektfil (oförändrade)
 def get_available_drives(service):
     drives = [{'id': 'root', 'name': 'Min enhet'}]
     try:
@@ -63,13 +64,15 @@ def save_story_order(service, folder_id, story_items):
     except HttpError as e:
         return {'error': f"Kunde inte spara projektfilen: {e}"}
 
+# Huvudfunktion för att hämta innehåll från en mapp
 def get_content_units_from_folder(service, folder_id):
-    # Denna funktion är oförändrad från förra steget
     try:
+        # Hämta fil-metadata
         query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
         items = results.get('files', [])
         unit_map = {item.get('name'): item for item in items if item.get('name') != PROJECT_FILE_NAME}
+        
         saved_order = load_story_order(service, folder_id)
         final_google_items = []
         if saved_order:
@@ -77,6 +80,7 @@ def get_content_units_from_folder(service, folder_id):
             final_google_items.extend(list(ordered_map.values()))
         remaining_items = sorted(list(unit_map.values()), key=lambda x: x.get('name', '').lower())
         final_google_items.extend(remaining_items)
+
         story_units = []
         for item in final_google_items:
             filename = item.get('name')
@@ -84,13 +88,23 @@ def get_content_units_from_folder(service, folder_id):
             if ext in SUPPORTED_EXTENSIONS:
                 unit = {'filename': filename, 'id': item.get('id'), 'type': 'unknown', 'thumbnail': item.get('thumbnailLink')}
                 if ext in SUPPORTED_IMAGE_EXTENSIONS: unit['type'] = 'image'
-                elif ext in SUPPORTED_TEXT_EXTENSIONS: unit['type'] = 'text'
                 elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
+                elif ext in SUPPORTED_TEXT_EXTENSIONS:
+                    unit['type'] = 'text'
+                    # NYTT: Ladda ner innehållet i textfilen
+                    try:
+                        request = service.files().get_media(fileId=item.get('id'))
+                        fh = io.BytesIO()
+                        downloader = MediaIoBaseDownload(fh, request)
+                        done = False
+                        while not done: status, done = downloader.next_chunk()
+                        unit['content'] = fh.getvalue().decode('utf-8')
+                    except Exception as e:
+                        unit['content'] = f"Fel vid läsning av fil: {e}"
+                
                 story_units.append(unit)
         return {'units': story_units}
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
-
-# --- NYA FUNKTIONER FÖR FAS 4 ---
 
 def upload_new_text_file(service, folder_id, filename, content):
     """Laddar upp en ny textfil till Google Drive."""
