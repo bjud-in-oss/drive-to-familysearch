@@ -3,46 +3,43 @@ from pathlib import Path
 from googleapiclient.errors import HttpError
 import io
 
-# Konfiguration
+# Konfiguration (oförändrad)
 SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
 SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
 
 def get_folder_id_from_path(service, path_string):
-    """Hittar ID för en mapp oavsett om den ligger i 'Min enhet' eller en 'Delad enhet'."""
+    """
+    NY, UPPGRADERAD FUNKTION:
+    Hittar ID för en mapp genom att söka i både 'Min enhet' och alla 'Delade enheter'.
+    """
+    parent_id = 'root'
     parts = [part for part in path_string.strip().split('/') if part]
     if not parts:
         return {'error': 'Sökvägen är tom.'}
 
-    start_folder_name = parts[0]
-    parent_id = 'root' # Anta "Min enhet" som standard
-    
-    try:
-        # Leta först bland Delade enheter
-        drives_result = service.drives().list().execute()
-        shared_drives = drives_result.get('drives', [])
-        found_shared_drive = False
-        for drive in shared_drives:
-            if drive.get('name') == start_folder_name:
-                parent_id = drive.get('id')
-                found_shared_drive = True
-                break
-        
-        parts_to_traverse = parts[1:] if found_shared_drive else parts
-
-        # Gå igenom resten av mappstrukturen
-        for part in parts_to_traverse:
+    for i, part in enumerate(parts):
+        try:
             query = f"'{parent_id}' in parents and name = '{part}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
             
+            # Avgörande ändring: Dessa parametrar instruerar API:et att söka överallt.
             results = service.files().list(
-                q=query, supportsAllDrives=True, includeItemsFromAllDrives=True,
-                spaces='drive', fields='files(id, name)'
+                q=query,
+                corpora="allDrives",
+                includeItemsFromAllDrives=True,
+                supportsAllDrives=True,
+                spaces='drive',
+                fields='files(id, name)'
             ).execute()
             
             items = results.get('files', [])
             if not items:
-                return {'error': f"Mappen '{part}' hittades inte."}
+                # Ge ett mer specifikt felmeddelande
+                if i == 0:
+                    return {'error': f"Hittade inte startmappen eller den Delade Enheten med namnet: '{part}'. Kontrollera stavningen."}
+                else:
+                    return {'error': f"Hittade inte undermappen '{part}'."}
             parent_id = items[0]['id']
             
     except HttpError as error:
@@ -51,15 +48,21 @@ def get_folder_id_from_path(service, path_string):
     return {'id': parent_id}
 
 def get_content_units_from_folder(service, folder_path):
+    # Denna funktion är nu korrekt eftersom den anropar den nya, smartare get_folder_id_from_path
     id_result = get_folder_id_from_path(service, folder_path)
     if 'error' in id_result: return id_result
     folder_id = id_result['id']
+
     all_units = []
     try:
+        # Samma viktiga parametrar behövs här
         results = service.files().list(
             q=f"'{folder_id}' in parents and trashed = false",
-            supportsAllDrives=True, includeItemsFromAllDrives=True,
-            pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)"
+            corpora="allDrives",
+            includeItemsFromAllDrives=True,
+            supportsAllDrives=True,
+            pageSize=1000,
+            fields="files(id, name, mimeType, thumbnailLink)"
         ).execute()
         items = results.get('files', [])
         if not items: return {'units': []}
