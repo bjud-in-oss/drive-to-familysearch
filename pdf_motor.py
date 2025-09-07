@@ -9,34 +9,36 @@ SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
 SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
 
+def get_available_drives(service):
+    """Hämtar en lista på användarens 'Min enhet' och alla Delade enheter."""
+    drives = [{'id': 'root', 'name': 'Min enhet'}] # Lägg till Min enhet manuellt
+    try:
+        response = service.drives().list().execute()
+        drives.extend(response.get('drives', []))
+        return drives
+    except HttpError as e:
+        return {'error': f"Kunde inte hämta lista på enheter: {e}"}
+
 def list_folders(service, folder_id='root'):
     """Hämtar en lista på alla mappar inuti en specifik mapp."""
     try:
         query = f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = service.files().list(
-            q=query,
-            supportsAllDrives=True,
-            includeItemsFromAllDrives=True,
-            spaces='drive',
-            fields='files(id, name)'
+            q=query, supportsAllDrives=True, includeItemsFromAllDrives=True,
+            spaces='drive', fields='files(id, name)'
         ).execute()
         return results.get('files', [])
     except HttpError as e:
         return {'error': f"Kunde inte hämta mappar: {e}"}
 
-
 def get_content_units_from_folder(service, folder_id):
     """Hämtar filerna inuti en specifik mapp, med mappens ID."""
     all_units = []
     try:
-        query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(
             q=f"'{folder_id}' in parents and trashed = false",
-            corpora="allDrives",
-            includeItemsFromAllDrives=True,
-            supportsAllDrives=True,
-            pageSize=1000,
-            fields="files(id, name, mimeType, thumbnailLink)"
+            corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True,
+            pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)"
         ).execute()
         items = results.get('files', [])
         if not items: return {'units': []}
