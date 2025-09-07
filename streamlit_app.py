@@ -10,11 +10,12 @@ from googleapiclient.discovery import build
 # Importera vår motor
 import pdf_motor
 
-# --- Konfiguration (Oförändrad) ---
+# --- Konfiguration ---
 CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
 CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
 REDIRECT_URI = st.secrets.get("APP_URL") 
-SCOPES = ['https://www.googleapis.com/auth/drive'] # ÄNDRING: Kräver nu skrivrättigheter för att spara projektfil
+# VIKTIG ÄNDRING: Vi behöver nu fulla rättigheter för att kunna spara projektfilen
+SCOPES = ['https://www.googleapis.com/auth/drive']
 TOKEN_URI = 'https://oauth2.googleapis.com/token'
 AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth'
 
@@ -51,8 +52,7 @@ def initialize_state():
         'organize_mode': False, 'selected_indices': set(), 'clipboard': []
     }
     for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+        if key not in st.session_state: st.session_state[key] = value
 
 initialize_state()
 
@@ -65,8 +65,7 @@ if auth_code and st.session_state.drive_service is None:
             try:
                 user_info = st.session_state.drive_service.about().get(fields='user').execute()
                 st.session_state.user_email = user_info['user']['emailAddress']
-            except Exception:
-                st.session_state.user_email = "Okänd"
+            except Exception: st.session_state.user_email = "Okänd"
         st.query_params.clear()
         st.rerun()
 
@@ -86,6 +85,7 @@ else:
         st.divider()
         
         # --- FILBLÄDDRARE I SIDOPANELEN ---
+        # ... (Denna del är oförändrad)
         st.markdown("### Välj Källmapp")
         if st.session_state.current_folder_id is None:
             drives = pdf_motor.get_available_drives(st.session_state.drive_service)
@@ -93,7 +93,7 @@ else:
             else:
                 for drive in sorted(drives, key=lambda x: x['name'].lower()):
                     icon = "📁" if drive['id'] == 'root' else "🏢"
-                    if st.button(f"{icon} {drive['name']}", use_container_width=True):
+                    if st.button(f"{icon} {drive['name']}", use_container_width=True, key=drive['id']):
                         st.session_state.current_folder_id, st.session_state.current_folder_name = drive['id'], drive['name']
                         st.session_state.path_history = []
                         st.rerun()
@@ -129,12 +129,32 @@ else:
             st.markdown("### Verktyg")
             st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{i}")}
             st.write(f"{len(st.session_state.selected_indices)} objekt valda.")
-            if st.button("Ta bort valda från berättelsen", disabled=not st.session_state.selected_indices):
+            
+            # KNAPPAR FÖR KLIPP UT & KLISTRA IN
+            if st.button("Klipp ut valda 📤", disabled=not st.session_state.selected_indices):
+                st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(list(st.session_state.selected_indices))]
                 for i in sorted(list(st.session_state.selected_indices), reverse=True):
                     del st.session_state.story_items[i]
-                for i in range(len(st.session_state.story_items) + len(st.session_state.selected_indices) + 1): st.session_state[f"select_{i}"]=False
+                for i in range(len(st.session_state.story_items) + 10): st.session_state[f"select_{i}"]=False
                 st.session_state.selected_indices = set()
-                # pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                st.rerun()
+
+            if st.button("Klistra in överst 📥", disabled=not st.session_state.clipboard):
+                st.session_state.story_items = st.session_state.clipboard + st.session_state.story_items
+                st.session_state.clipboard = []
+                pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                st.rerun()
+                
+            if st.session_state.clipboard:
+                st.info(f"{len(st.session_state.clipboard)} objekt finns i urklipp.")
+
+            if st.button("Ta bort valda från berättelsen 🗑️", disabled=not st.session_state.selected_indices):
+                for i in sorted(list(st.session_state.selected_indices), reverse=True):
+                    del st.session_state.story_items[i]
+                for i in range(len(st.session_state.story_items) + 10): st.session_state[f"select_{i}"]=False
+                st.session_state.selected_indices = set()
+                pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                 st.rerun()
 
     with col_main:
@@ -142,22 +162,25 @@ else:
         if st.session_state.story_items is None:
             st.info("Välj en mapp i panelen till höger och klicka på 'Läs in denna mapp' för att börja.")
         else:
-            # Använd en key för att direkt koppla knappen till minnet
             st.toggle("Ändra ordning & innehåll", key="organize_mode")
             st.markdown("---")
             st.markdown("### Berättelsens flöde")
             if not st.session_state.story_items:
-                st.info("Inga relevanta filer hittades i denna mapp.")
+                st.info("Inga filer att visa.")
             else:
                 for i, item in enumerate(st.session_state.story_items):
-                    cols = [1, 5] if not st.session_state.organize_mode else [0.5, 1, 5]
-                    col_list = st.columns(cols)
-                    if st.session_state.organize_mode:
-                        col_list[0].checkbox("", key=f"select_{i}")
-                    with col_list[-2]:
-                        if item['type'] == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
-                        elif item['type'] == 'pdf': st.markdown("<div style='font-size: 48px; text-align: center;'>📑</div>", unsafe_allow_html=True)
-                        elif item['type'] == 'text': st.markdown("<div style='font-size: 48px; text-align: center;'>📄</div>", unsafe_allow_html=True)
-                    with col_list[-1]:
-                        st.write(item['filename'])
+                    is_in_clipboard = item in st.session_state.clipboard
+                    item_opacity = 0.5 if is_in_clipboard else 1.0 # Visuell feedback
+                    
+                    with st.container():
+                        cols = [1, 5] if not st.session_state.organize_mode else [0.5, 1, 5]
+                        col_list = st.columns(cols)
+                        if st.session_state.organize_mode:
+                            col_list[0].checkbox("", key=f"select_{i}")
+                        with col_list[-2]:
+                            if item['type'] == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100, output_format="PNG")
+                            elif item['type'] == 'pdf': st.markdown(f"<div style='font-size: 48px; text-align: center; opacity: {item_opacity};'>📑</div>", unsafe_allow_html=True)
+                            elif item['type'] == 'text': st.markdown(f"<div style='font-size: 48px; text-align: center; opacity: {item_opacity};'>📄</div>", unsafe_allow_html=True)
+                        with col_list[-1]:
+                            st.write(f"<div style='opacity: {item_opacity};'>{item['filename']}</div>", unsafe_allow_html=True)
                     st.divider()
