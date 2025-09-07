@@ -25,9 +25,6 @@ def get_available_drives(service):
     except HttpError as e:
         return {'error': f"Kunde inte hämta lista på enheter: {e}"}
 
-
-
-
 # Standardstilar (kan göras redigerbara i en framtida fas)
 STYLES = {
     'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
@@ -35,11 +32,7 @@ STYLES = {
     'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
 }
 
-
-
 # --- Klasser och hjälpfunktioner porterade från originalskript ---
-
-
 
 class PreciseFPDF(FPDF):
 
