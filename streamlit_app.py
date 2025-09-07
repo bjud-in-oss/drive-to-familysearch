@@ -53,6 +53,7 @@ if 'user_email' not in st.session_state: st.session_state.user_email = None
 if 'path_history' not in st.session_state: st.session_state.path_history = []
 if 'current_folder_id' not in st.session_state: st.session_state.current_folder_id = 'root'
 if 'current_folder_name' not in st.session_state: st.session_state.current_folder_name = 'Min enhet / Delade enheter'
+if 'story_items' not in st.session_state: st.session_state.story_items = None
 
 # Hantera callback från Google
 auth_code = st.query_params.get('code')
