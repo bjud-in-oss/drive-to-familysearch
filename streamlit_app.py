@@ -1,595 +1,581 @@
-import streamlit as st
-
 import os
 
-import requests
+from pathlib import Path
 
-from urllib.parse import urlencode
+from googleapiclient.errors import HttpError
+
+from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
+
+import io
+
+import json
 
 import re
 
+from pypdf import PdfReader, PdfWriter
 
+from fpdf import FPDF, XPos, YPos
 
-# Importera Googles bibliotek
-
-from google.oauth2.credentials import Credentials
-
-from googleapiclient.discovery import build
-
-
-
-# Importera vår motor
-
-import pdf_motor
+from PIL import Image
 
 
 
-# --- Konfiguration ---
+# Konfiguration
 
-CLIENT_ID = st.secrets.get("GOOGLE_CLIENT_ID")
+SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 
-CLIENT_SECRET = st.secrets.get("GOOGLE_CLIENT_SECRET")
+SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
 
-REDIRECT_URI = st.secrets.get("APP_URL") 
+SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 
-SCOPES = ['https://www.googleapis.com/auth/drive']
+SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
 
-TOKEN_URI = 'https://oauth2.googleapis.com/token'
+PROJECT_FILE_NAME = '.storyproject.json'
 
-AUTH_URI = 'https://accounts.google.com/o/oauth2/v2/auth'
-
-
-
-# --- Inloggningslogik ---
-
-def get_auth_url():
-
-    params = {'client_id': CLIENT_ID, 'redirect_uri': REDIRECT_URI, 'response_type': 'code', 'scope': ' '.join(SCOPES), 'access_type': 'offline', 'prompt': 'consent'}
-
-    return AUTH_URI + '?' + urlencode(params)
+MM_TO_PT = 2.83465
 
 
 
-def exchange_code_for_service(auth_code):
+# Standardstilar (kan göras redigerbara i en framtida fas)
+
+STYLES = {
+
+    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
+
+    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
+
+    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
+
+}
+
+
+
+# --- Klasser och hjälpfunktioner porterade från originalskript ---
+
+
+
+class PreciseFPDF(FPDF):
+
+    """En anpassad FPDF-klass för bättre textkontroll."""
+
+    def add_styled_text(self, text, style, content_width_mm):
+
+        self.set_font(style.get('font', 'Helvetica'), style.get('style', ''), style.get('size', 11))
+
+        self.multi_cell(content_width_mm, style.get('spacing', 6), text, align=style.get('align', 'J'))
+
+
+
+def parse_style_from_filename(filename):
+
+    """Hämtar stil-taggen från ett filnamn."""
+
+    stem = Path(filename).stem.lower()
+
+    parts = stem.split('.')
+
+    if len(parts) > 1 and Path(filename).suffix.lower() == '.txt':
+
+        return parts[-1]
+
+    return 'p'
+
+
+
+def download_file_content(service, file_id):
+
+    """Hämtar det fullständiga innehållet av en fil som bytes."""
 
     try:
 
-        token_data = {'code': auth_code, 'client_id': CLIENT_ID, 'client_secret': CLIENT_SECRET, 'redirect_uri': REDIRECT_URI, 'grant_type': 'authorization_code'}
+        request = service.files().get_media(fileId=file_id)
 
-        response = requests.post(TOKEN_URI, data=token_data)
+        fh = io.BytesIO()
 
-        response.raise_for_status()
+        downloader = MediaIoBaseDownload(fh, request)
 
-        credentials_data = response.json()
+        done = False
 
-        credentials_data['client_id'] = CLIENT_ID
+        while not done:
 
-        credentials_data['client_secret'] = CLIENT_SECRET
+            status, done = downloader.next_chunk()
 
-        credentials = Credentials.from_authorized_user_info(credentials_data, SCOPES)
+        fh.seek(0)
 
-        drive_service = build('drive', 'v3', credentials=credentials)
+        return fh
 
-        return drive_service
+    except HttpError as e:
 
-    except Exception as e:
-
-        st.error(f"Ett fel inträffade vid inloggning: {e}")
+        print(f"Kunde inte ladda ner fil {file_id}: {e}")
 
         return None
 
 
 
-def reload_story_items():
+# Funktioner för att hantera enheter, mappar och projektfil (oförändrade)
 
-    """Hjälpfunktion för att ladda om fillistan efter en ändring."""
+def get_available_drives(service):
 
-    with st.spinner("Uppdaterar fillista..."):
+    drives = [{'id': 'root', 'name': 'Min enhet'}]
 
-        result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
+    try:
 
-        if 'error' in result: st.error(result['error'])
+        response = service.drives().list().execute()
 
-        elif 'units' in result: st.session_state.story_items = result['units']
+        drives.extend(response.get('drives', []))
 
-    st.rerun()
+        return drives
 
+    except HttpError as e: return {'error': f"Kunde inte hämta enheter: {e}"}
 
 
-# --- Applikationens Flöde ---
 
-st.set_page_config(layout="wide")
+def list_folders(service, folder_id='root'):
 
-st.title("Berättelsebyggaren")
+    try:
 
+        query = f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
 
+        results = service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, spaces='drive', fields='files(id, name)').execute()
 
-def initialize_state():
+        return results.get('files', [])
 
-    defaults = {
+    except HttpError as e: return {'error': f"Kunde inte hämta mappar: {e}"}
 
-        'drive_service': None, 'user_email': None, 'story_items': None, 'path_history': [], 
 
-        'current_folder_id': None, 'current_folder_name': None, 'organize_mode': False, 
 
-        'selected_indices': set(), 'clipboard': [], 'quick_sort_mode': False, 'unsorted_items': []
+def load_story_order(service, folder_id):
 
-    }
+    try:
 
-    for key, value in defaults.items():
+        query = f"'{folder_id}' in parents and name = '{PROJECT_FILE_NAME}' and trashed = false"
 
-        if key not in st.session_state: st.session_state[key] = value
+        response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, fields="files(id)").execute()
 
-initialize_state()
+        files = response.get('files', [])
 
+        if files:
 
+            request = service.files().get_media(fileId=files[0]['id'])
 
-auth_code = st.query_params.get('code')
+            fh = io.BytesIO()
 
-if auth_code and st.session_state.drive_service is None:
+            downloader = MediaIoBaseDownload(fh, request)
 
-    with st.spinner("Verifierar inloggning..."):
+            done = False
 
-        st.session_state.drive_service = exchange_code_for_service(auth_code)
+            while done is False: status, done = downloader.next_chunk()
 
-        if st.session_state.drive_service:
+            project_data = json.loads(fh.getvalue())
 
-            try:
+            return project_data.get('order', [])
 
-                user_info = st.session_state.drive_service.about().get(fields='user').execute()
+    except HttpError as e: print(f"Kunde inte ladda projektfil: {e}")
 
-                st.session_state.user_email = user_info['user']['emailAddress']
+    return None
 
-            except Exception: st.session_state.user_email = "Okänd"
 
-        st.query_params.clear()
 
-        st.rerun()
+def save_story_order(service, folder_id, story_items):
 
+    order_to_save = [item['filename'] for item in story_items]
 
+    content = json.dumps({'order': order_to_save}, indent=2).encode('utf-8')
 
-# --- Huvudlayout ---
+    fh = io.BytesIO(content)
 
-if st.session_state.drive_service is None:
+    media_body = MediaIoBaseUpload(fh, mimetype='application/json', resumable=True)
 
-    # Inloggningssida
+    try:
 
-    st.markdown("### Välkommen!")
+        query = f"'{folder_id}' in parents and name = '{PROJECT_FILE_NAME}' and trashed = false"
 
-    auth_url = get_auth_url()
+        response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, fields="files(id)").execute()
 
-    if auth_url: st.link_button("Logga in med Google", auth_url)
+        existing_files = response.get('files', [])
 
-    else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
+        if existing_files:
 
-else:
+            file_id = existing_files[0]['id']
 
-    # Huvudapplikation
-
-    col_main, col_sidebar = st.columns([3, 1])
-
-
-
-    with col_sidebar:
-
-        st.markdown(f"**Ansluten som:**\n{st.session_state.user_email}")
-
-        st.divider()
-
-        
-
-        # FILBLÄDDRARE
-
-        if not st.session_state.quick_sort_mode:
-
-            st.markdown("### Välj Källmapp")
-
-            if st.session_state.current_folder_id is None:
-
-                drives = pdf_motor.get_available_drives(st.session_state.drive_service)
-
-                if 'error' in drives: st.error(drives['error'])
-
-                else:
-
-                    for drive in sorted(drives, key=lambda x: x.get('name', '').lower()):
-
-                        icon = "📁" if drive.get('id') == 'root' else "🏢"
-
-                        if st.button(f"{icon} {drive.get('name', 'Okänd enhet')}", use_container_width=True, key=drive.get('id')):
-
-                            st.session_state.current_folder_id, st.session_state.current_folder_name = drive.get('id'), drive.get('name')
-
-                            st.session_state.path_history = []
-
-                            st.rerun()
-
-            else:
-
-                path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
-
-                st.write(f"**Plats:** `{' / '.join(path_parts)}`")
-
-                c1, c2 = st.columns(2)
-
-                if c1.button("⬅️ Byt enhet", use_container_width=True):
-
-                    initialize_state()
-
-                    st.rerun()
-
-                if c2.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
-
-                    prev_id, prev_name = st.session_state.path_history.pop()
-
-                    st.session_state.current_folder_id, st.session_state.current_folder_name = prev_id, prev_name
-
-                    st.session_state.story_items = None
-
-                    st.rerun()
-
-                if st.button("✅ Läs in denna mapp", type="primary", use_container_width=True):
-
-                    reload_story_items()
-
-
-
-                folders = pdf_motor.list_folders(st.session_state.drive_service, st.session_state.current_folder_id)
-
-                if 'error' in folders: st.error(folders['error'])
-
-                elif folders:
-
-                    st.markdown("*Undermappar:*")
-
-                    for folder in sorted(folders, key=lambda x: x.get('name', '').lower()):
-
-                        if st.button(f"📁 {folder.get('name', 'Okänd mapp')}", key=folder.get('id'), use_container_width=True):
-
-                            st.session_state.path_history.append((st.session_state.current_folder_id, st.session_state.current_folder_name))
-
-                            st.session_state.current_folder_id, st.session_state.current_folder_name = folder.get('id'), folder.get('name')
-
-                            st.session_state.story_items = None
-
-                            st.rerun()
-
-        
-
-# VERKTYG FÖR ORGANISERING
-
-        if st.session_state.story_items is not None and st.session_state.organize_mode:
-
-            st.divider()
-
-            st.markdown("### Verktyg")
-
-            st.info("Dina originalfiler raderas eller ändras aldrig.", icon="ℹ️")
-
-
-
-            with st.expander("➕ Infoga ny text..."):
-
-                with st.form("new_text_form", clear_on_submit=True):
-
-                    new_text_name = st.text_input("Filnamn (utan .txt)")
-
-                    new_text_style = st.selectbox("Textstil", ['p', 'h1', 'h2'])
-
-                    new_text_content = st.text_area("Innehåll")
-
-                    submitted = st.form_submit_button("Spara ny textfil")
-
-                    if submitted:
-
-                        if new_text_name and new_text_content:
-
-                            prefix = f"{len(st.session_state.story_items):03d}"
-
-                            final_filename = f"{prefix}_{new_text_name}.{new_text_style}.txt"
-
-                            with st.spinner("Sparar textfil..."):
-
-                               result = pdf_motor.upload_new_text_file(st.session_state.drive_service, st.session_state.current_folder_id, final_filename, new_text_content)
-
-                               if 'error' in result: st.error(result['error'])
-
-                               else:
-
-                                   st.success("Textfil sparad!")
-
-                                   reload_story_items()
-
-                        else:
-
-                            st.warning("Filnamn och innehåll får inte vara tomt.")
-
-
-
-            st.divider()
-
-            
-
-            if st.button("Starta Snabbsortering 🔢", disabled=st.session_state.quick_sort_mode, use_container_width=True):
-
-                st.session_state.quick_sort_mode = True
-
-                with st.spinner("Förbereder snabbsortering..."):
-
-                    all_files_result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
-
-                    if 'units' in all_files_result:
-
-                        all_items_map = {item['filename']: item for item in all_files_result['units']}
-
-                        sorted_filenames = {item['filename'] for item in st.session_state.story_items}
-
-                        unsorted = [item for filename, item in all_items_map.items() if filename not in sorted_filenames]
-
-                        st.session_state.unsorted_items = sorted(unsorted, key=lambda x: x['filename'].lower())
-
-                st.rerun()
-
-
-
-            st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
-
-            st.info(f"{len(st.session_state.selected_indices)} objekt valda.")
-
-            
-
-            tool_cols = st.columns(2)
-
-            with tool_cols[0]:
-
-                if st.button("Klipp ut 📤", disabled=not st.session_state.selected_indices, use_container_width=True):
-
-                    st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(list(st.session_state.selected_indices))]
-
-                    for i in sorted(list(st.session_state.selected_indices), reverse=True): del st.session_state.story_items[i]
-
-                    st.session_state.selected_indices = set()
-
-                    pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
-
-                    st.rerun()
-
-            
-
-            with tool_cols[1]:
-
-                if st.button("Klistra in 📥", disabled=not st.session_state.clipboard, use_container_width=True):
-
-                    st.session_state.story_items = st.session_state.clipboard + st.session_state.story_items
-
-                    st.session_state.clipboard = []
-
-                    pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
-
-                    st.rerun()
-
-            
-
-            if st.session_state.clipboard: st.success(f"{len(st.session_state.clipboard)} i urklipp.")
-
-            
-
-            if st.button("Ta bort 🗑️", type="primary", disabled=not st.session_state.selected_indices, use_container_width=True):
-
-                indices_to_remove = sorted(list(st.session_state.selected_indices), reverse=True)
-
-                for i in indices_to_remove:
-
-                    st.session_state[f"select_{st.session_state.story_items[i]['id']}"] = False
-
-                    del st.session_state.story_items[i]
-
-                st.session_state.selected_indices = set()
-
-                pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
-
-                st.rerun()
-
-                
-
-        # Inställningar & Publicering
-
-        if st.session_state.story_items is not None:
-
-            st.divider()
-
-            st.markdown("### Inställningar & Publicering")
-
-
-
-            settings_quality = st.slider("Bildkvalitet (lägre = mindre filstorlek)", 10, 95, 85, key="quality_slider")
-
-            settings_max_size = st.number_input("Max filstorlek per PDF (MB)", min_value=1, max_value=100, value=15, key="max_size_input")
-
-            
-
-            if st.button("Skapa PDF-album 🚀", type="primary", use_container_width=True):
-
-                st.session_state.generated_pdfs = None 
-
-                progress_bar_area = st.empty()
-
-                
-
-                def update_progress(fraction, text):
-
-                    progress_bar_area.progress(fraction, text)
-
-                
-
-                settings = {'quality': settings_quality, 'max_size_mb': settings_max_size}
-
-                
-
-                result = pdf_motor.generate_pdfs_from_story(
-
-                    st.session_state.drive_service,
-
-                    st.session_state.story_items,
-
-                    settings,
-
-                    update_progress
-
-                )
-
-                
-
-                if 'error' in result:
-
-                    st.error(result['error'])
-
-                elif 'pdfs' in result:
-
-                    st.session_state.generated_pdfs = result['pdfs']
-
-                
-
-                progress_bar_area.empty() # Ta bort förloppsindikatorn när klar
-
-
-
-            if 'generated_pdfs' in st.session_state and st.session_state.generated_pdfs:
-
-                st.success("Dina PDF-album är klara!")
-
-                folder_name = st.session_state.current_folder_name.replace(" ", "_")
-
-                for i, pdf_buffer in enumerate(st.session_state.generated_pdfs):
-
-                    st.download_button(
-
-                        label=f"Ladda ner Del {i+1}",
-
-                        data=pdf_buffer,
-
-                        file_name=f"{folder_name}_Del_{i+1}.pdf",
-
-                        mime="application/pdf",
-
-                        use_container_width=True,
-
-                        key=f"download_{i}"
-
-                    )
-
-
-
-with col_main:
-
-        # --- SNABBSORTERINGS-LÄGE ---
-
-        if st.session_state.story_items is not None and st.session_state.quick_sort_mode:
-
-            st.warning("SNABBSORTERINGS-LÄGE AKTIVT")
-
-            if st.button("✅ Avsluta Snabbsortering och spara"):
-
-                # Lägg tillbaka eventuellt osorterade objekt i slutet av listan
-
-                if st.session_state.unsorted_items:
-
-                    st.session_state.story_items.extend(st.session_state.unsorted_items)
-
-                pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
-
-                st.session_state.quick_sort_mode = False
-
-                st.rerun()
-
-            
-
-            qs_col1, qs_col2 = st.columns(2)
-
-            with qs_col1:
-
-                st.markdown("#### Kvar att sortera")
-
-                with st.container(height=600):
-
-                    for i, item in enumerate(st.session_state.unsorted_items):
-
-                        if st.button(f"➕ {item['filename']}", key=f"add_{item['id']}", use_container_width=True):
-
-                            st.session_state.story_items.append(item)
-
-                            st.session_state.unsorted_items.pop(i)
-
-                            st.rerun()
-
-            with qs_col2:
-
-                st.markdown("#### Din Berättelse (i ordning)")
-
-                with st.container(height=600):
-
-                    if not st.session_state.story_items: st.info("Börja genom att klicka på filer i vänstra listan.")
-
-                    # Visa den visuella listan även här
-
-                    for item in st.session_state.story_items:
-
-                        with st.container():
-
-                            i_col1, i_col2 = st.columns([1,5])
-
-                            with i_col1:
-
-                                if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=75)
-
-                                elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 32px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-
-                                elif item.get('type') == 'text': st.markdown("<p style='font-size: 32px; text-align: center;'>📄</p>", unsafe_allow_html=True)
-
-                            with i_col2:
-
-                                st.write(item.get('filename', 'Okänt filnamn'))
-
-
-
-        # --- NORMAL VISUELL LISTA / ORGANISERINGS-LÄGE ---
-
-        elif st.session_state.story_items is not None:
-
-            st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
-
-            st.markdown("---")
-
-            st.markdown("### Berättelsens flöde")
-
-            if not st.session_state.story_items:
-
-                st.info("Inga filer att visa.")
-
-            else:
-
-                for i, item in enumerate(st.session_state.story_items):
-
-                    with st.container():
-
-                        cols = [1, 10] if not st.session_state.organize_mode else [0.5, 1, 10]
-
-                        col_list = st.columns(cols)
-
-                        if st.session_state.organize_mode: col_list[0].checkbox("", key=f"select_{item['id']}")
-
-                        with col_list[-2]:
-
-                            if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
-
-                            elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-
-                            elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
-
-                        with col_list[-1]: st.write(item.get('filename', 'Okänt filnamn'))
-
-                    st.divider()
+            service.files().update(fileId=file_id, media_body=media_body, supportsAllDrives=True).execute()
 
         else:
 
-            st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in denna mapp'.")
+            file_metadata = {'name': PROJECT_FILE_NAME, 'parents': [folder_id]}
+
+            service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id').execute()
+
+        return {'success': True}
+
+    except HttpError as e:
+
+        return {'error': f"Kunde inte spara projektfilen: {e}"}
+
+
+
+# Huvudfunktion för att hämta innehåll från en mapp
+
+def get_content_units_from_folder(service, folder_id):
+
+    try:
+
+        # Hämta fil-metadata
+
+        query = f"'{folder_id}' in parents and trashed = false"
+
+        results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
+
+        items = results.get('files', [])
+
+        unit_map = {item.get('name'): item for item in items if item.get('name') != PROJECT_FILE_NAME}
+
+        
+
+        saved_order = load_story_order(service, folder_id)
+
+        final_google_items = []
+
+        if saved_order:
+
+            ordered_map = {filename: unit_map.pop(filename) for filename in saved_order if filename in unit_map}
+
+            final_google_items.extend(list(ordered_map.values()))
+
+        remaining_items = sorted(list(unit_map.values()), key=lambda x: x.get('name', '').lower())
+
+        final_google_items.extend(remaining_items)
+
+
+
+        story_units = []
+
+        for item in final_google_items:
+
+            filename = item.get('name')
+
+            ext = os.path.splitext(filename)[1].lower()
+
+            if ext in SUPPORTED_EXTENSIONS:
+
+                unit = {'filename': filename, 'id': item.get('id'), 'type': 'unknown', 'thumbnail': item.get('thumbnailLink')}
+
+                if ext in SUPPORTED_IMAGE_EXTENSIONS: unit['type'] = 'image'
+
+                elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
+
+                elif ext in SUPPORTED_TEXT_EXTENSIONS:
+
+                    unit['type'] = 'text'
+
+                    # NYTT: Ladda ner innehållet i textfilen
+
+                    try:
+
+                        request = service.files().get_media(fileId=item.get('id'))
+
+                        fh = io.BytesIO()
+
+                        downloader = MediaIoBaseDownload(fh, request)
+
+                        done = False
+
+                        while not done: status, done = downloader.next_chunk()
+
+                        unit['content'] = fh.getvalue().decode('utf-8')
+
+                    except Exception as e:
+
+                        unit['content'] = f"Fel vid läsning av fil: {e}"
+
+                
+
+                story_units.append(unit)
+
+        return {'units': story_units}
+
+    except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
+
+
+
+def upload_new_text_file(service, folder_id, filename, content):
+
+    """Laddar upp en ny textfil till Google Drive."""
+
+    try:
+
+        content_bytes = content.encode('utf-8')
+
+        fh = io.BytesIO(content_bytes)
+
+        media_body = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
+
+        file_metadata = {'name': filename, 'parents': [folder_id]}
+
+        service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id').execute()
+
+        return {'success': True}
+
+    except HttpError as e:
+
+        return {'error': f"Kunde inte ladda upp textfil: {e}"}
+
+
+
+def split_pdf_and_upload(service, file_id, original_filename, folder_id):
+
+    """Hämtar, delar upp och laddar upp sidorna i en PDF."""
+
+    try:
+
+        # Hämta original-PDF
+
+        request = service.files().get_media(fileId=file_id)
+
+        fh = io.BytesIO()
+
+        downloader = MediaIoBaseDownload(fh, request)
+
+        done = False
+
+        while not done:
+
+            status, done = downloader.next_chunk()
+
+        fh.seek(0)
+
+        
+
+        reader = PdfReader(fh)
+
+        newly_created_files = []
+
+        base_name = os.path.splitext(original_filename)[0]
+
+        
+
+        # Loopa, skapa och ladda upp varje sida
+
+        for i, page in enumerate(reader.pages):
+
+            writer = PdfWriter()
+
+            writer.add_page(page)
+
+            
+
+            page_buffer = io.BytesIO()
+
+            writer.write(page_buffer)
+
+            page_buffer.seek(0)
+
+            
+
+            new_filename = f"{base_name}_sida_{i+1:03}.pdf"
+
+            media_body = MediaIoBaseUpload(page_buffer, mimetype='application/pdf', resumable=True)
+
+            file_metadata = {'name': new_filename, 'parents': [folder_id]}
+
+            file = service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id, name, mimeType, thumbnailLink').execute()
+
+            
+
+            new_unit = {
+
+                'filename': file.get('name'), 'id': file.get('id'), 'type': 'pdf',
+
+                'thumbnail': file.get('thumbnailLink')
+
+            }
+
+            newly_created_files.append(new_unit)
+
+            
+
+        return {'new_files': newly_created_files}
+
+    except Exception as e:
+
+        return {'error': f"Kunde inte dela upp PDF: {e}"}
+
+
+
+
+
+# --- NY HUVUDFUNKTION FÖR PDF-GENERERING ---
+
+
+
+def generate_pdfs_from_story(service, story_items, settings, progress_callback):
+
+    """Huvudfunktionen som bygger PDF-albumen."""
+
+    doc_width_mm = 210
+
+    margin_mm = 10
+
+    content_width_mm = doc_width_mm - (2 * margin_mm)
+
+    max_size_bytes = settings.get('max_size_mb', 15) * 1024 * 1024
+
+    quality = settings.get('quality', 85)
+
+
+
+    generated_pdfs = []
+
+    current_pdf_writer = PdfWriter()
+
+    items_in_current_pdf = 0
+
+    total_items = len(story_items)
+
+
+
+    for i, item in enumerate(story_items):
+
+        progress_callback(i / total_items, f"Bearbetar {item['filename']}...")
+
+        content_buffer = download_file_content(service, item['id'])
+
+        if not content_buffer: continue
+
+
+
+        page_writer = PdfWriter()
+
+        
+
+        try:
+
+            if item['type'] == 'image':
+
+                with Image.open(content_buffer) as img:
+
+                    img_w, img_h = img.size
+
+                    aspect_ratio = img_h / img_w
+
+                    img_height_mm = content_width_mm * aspect_ratio
+
+                    page_height_mm = img_height_mm + (2 * margin_mm)
+
+                    
+
+                    temp_page_pdf = FPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
+
+                    temp_page_pdf.add_page()
+
+                    img_byte_arr = io.BytesIO()
+
+                    img.convert('RGB').save(img_byte_arr, format='JPEG', quality=quality)
+
+                    temp_page_pdf.image(img_byte_arr, x=margin_mm, y=margin_mm, w=content_width_mm)
+
+                    
+
+                    with io.BytesIO(temp_page_pdf.output()) as f:
+
+                        page_writer.add_page(PdfReader(f).pages[0])
+
+
+
+            elif item['type'] == 'text':
+
+                text_content = content_buffer.read().decode('utf-8')
+
+                style = STYLES.get(parse_style_from_filename(item['filename']), STYLES['p'])
+
+                
+
+                temp_calc_pdf = FPDF('P', 'mm', 'A4'); temp_calc_pdf.add_page()
+
+                temp_calc_pdf.set_font(style.get('font'), style.get('style'), style.get('size'))
+
+                lines = temp_calc_pdf.multi_cell(w=content_width_mm, h=style.get('spacing'), text=text_content, dry_run=True, output='LINES')
+
+                text_height_mm = len(lines) * style.get('spacing')
+
+                page_height_mm = text_height_mm + (2 * margin_mm)
+
+
+
+                temp_page_pdf = PreciseFPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
+
+                temp_page_pdf.add_page()
+
+                temp_page_pdf.set_xy(margin_mm, margin_mm)
+
+                temp_page_pdf.add_styled_text(text_content, style, content_width_mm)
+
+                
+
+                with io.BytesIO(temp_page_pdf.output()) as f:
+
+                    page_writer.add_page(PdfReader(f).pages[0])
+
+            
+
+            if len(page_writer.pages) > 0:
+
+                test_writer = PdfWriter()
+
+                for page in current_pdf_writer.pages: test_writer.add_page(page)
+
+                test_writer.add_page(page_writer.pages[0])
+
+                
+
+                with io.BytesIO() as temp_buffer:
+
+                    test_writer.write(temp_buffer)
+
+                    current_size = temp_buffer.tell()
+
+
+
+                if current_size > max_size_bytes and items_in_current_pdf > 0:
+
+                    final_pdf_buffer = io.BytesIO()
+
+                    current_pdf_writer.write(final_pdf_buffer)
+
+                    final_pdf_buffer.seek(0)
+
+                    generated_pdfs.append(final_pdf_buffer)
+
+                    
+
+                    current_pdf_writer = page_writer
+
+                    items_in_current_pdf = 1
+
+                else:
+
+                    current_pdf_writer.add_page(page_writer.pages[0])
+
+                    items_in_current_pdf += 1
+
+        except Exception as e:
+
+            print(f"Kunde inte bearbeta {item['filename']}: {e}")
+
+
+
+    if items_in_current_pdf > 0:
+
+        final_pdf_buffer = io.BytesIO()
+
+        current_pdf_writer.write(final_pdf_buffer)
+
+        final_pdf_buffer.seek(0)
+
+        generated_pdfs.append(final_pdf_buffer)
+
+        
+
+    progress_callback(1.0, f"Klar! {len(generated_pdfs)} PDF-filer skapade.")
+
+    return {'pdfs': generated_pdfs}
