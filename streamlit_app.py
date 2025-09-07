@@ -119,23 +119,52 @@ else:
                         st.session_state.story_items = None
                         st.rerun()
 
-    # Huvudfönstret
-    if st.session_state.story_items is None:
-        st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka sedan på 'Läs in denna mapp' för att börja.")
+# --- Huvudfönstret ---
+if st.session_state.story_items is None:
+    st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka sedan på 'Läs in denna mapp' för att börja.")
+else:
+    # NYTT: Lägg till knappen för att växla organiserings-läge
+    st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
+    
+    # Om organiserings-läget är aktivt, visa verktygspanelen
+    if st.session_state.organize_mode:
+        with st.sidebar:
+            st.divider()
+            st.markdown("### Verktyg")
+            # Logik för att räkna valda rader (kommer användas mer senare)
+            selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
+            st.info(f"{len(selected_indices)} objekt valda.")
+            # Fler knappar (Ta bort, Klipp ut etc.) kommer att läggas till här i nästa steg.
+
+
+    st.markdown("---")
+    st.markdown("### Berättelsens flöde")
+    
+    if not st.session_state.story_items:
+        st.info("Inga relevanta filer hittades i denna mapp.")
     else:
-        st.markdown("---")
-        st.markdown("### Berättelsens flöde")
-        if not st.session_state.story_items:
-            st.info("Inga relevanta filer hittades i denna mapp.")
-        else:
-            for item in st.session_state.story_items:
-                with st.container():
-                    cols = [1, 5]
-                    col_list = st.columns(cols)
-                    with col_list[0]:
-                        if item.get('type') == 'image' and item.get('thumbnail'): st.image(item.get('thumbnail'), width=100)
-                        elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-                        elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
-                    with col_list[1]:
-                        st.write(item.get('filename', 'Okänt filnamn'))
-                st.divider()
+        # Gå igenom varje objekt i listan och rita upp det
+        for i, item in enumerate(st.session_state.story_items):
+            with st.container():
+                # ÄNDRING: Justera kolumner baserat på om vi är i organiserings-läge
+                cols = [1, 5] if not st.session_state.organize_mode else [0.5, 1, 5]
+                col_list = st.columns(cols)
+                
+                # Om vi är i organiserings-läge, visa en kryssruta i första kolumnen
+                if st.session_state.organize_mode:
+                    # Använd det unika fil-IDt som nyckel för att undvika buggar
+                    col_list[0].checkbox("", key=f"select_{item['id']}")
+
+                # Resten av kolumnerna för bild och filnamn
+                with col_list[-2]:
+                    if item.get('type') == 'image' and item.get('thumbnail'):
+                        st.image(item['thumbnail'], width=100)
+                    elif item.get('type') == 'pdf':
+                        st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                    elif item.get('type') == 'text':
+                        st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                
+                with col_list[-1]:
+                    st.write(item.get('filename', 'Okänt filnamn'))
+            
+            st.divider()
