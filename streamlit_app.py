@@ -73,24 +73,21 @@ if auth_code and st.session_state.drive_service is None:
 
 # --- Huvudlayout ---
 if st.session_state.drive_service is None:
-    # Inloggningssida
     st.markdown("### Välkommen!")
     auth_url = get_auth_url()
     if auth_url: st.link_button("Logga in med Google", auth_url)
     else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
 else:
-    # Huvudapplikation med sidopanel
     with st.sidebar:
         st.markdown(f"**Ansluten som:**\n{st.session_state.user_email}")
         st.divider()
-        
         st.markdown("### Välj Källmapp")
-        
         try:
             if st.session_state.current_folder_id is None:
                 drives = pdf_motor.get_available_drives(st.session_state.drive_service)
                 if 'error' in drives: st.error(drives['error'])
                 else:
+                    # KORRIGERAD RAD: Sorterar nu efter 'name'
                     for drive in sorted(drives, key=lambda x: x['name'].lower()):
                         icon = "📁" if drive['id'] == 'root' else "🏢"
                         if st.button(f"{icon} {drive['name']}", use_container_width=True, key=drive['id']):
@@ -100,7 +97,6 @@ else:
             else:
                 path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
                 st.write(f"**Plats:** `{' / '.join(path_parts)}`")
-                
                 col1, col2 = st.columns(2)
                 with col1:
                     if st.button("⬅️ Byt enhet", use_container_width=True):
@@ -123,6 +119,7 @@ else:
                 if 'error' in folders: st.error(folders['error'])
                 elif folders:
                     st.markdown("*Undermappar:*")
+                    # KORRIGERAD RAD: Sorterar nu efter 'name'
                     for folder in sorted(folders, key=lambda x: x['name'].lower()):
                         if st.button(f"📁 {folder['name']}", key=folder['id'], use_container_width=True):
                             st.session_state.path_history.append((st.session_state.current_folder_id, st.session_state.current_folder_name))
