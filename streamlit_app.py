@@ -2,11 +2,11 @@ import streamlit as st
 import os
 import requests
 from urllib.parse import urlencode
-import re
 
 # Importera Googles bibliotek
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 
 # Importera vår motor
 import pdf_motor
@@ -73,15 +73,12 @@ if auth_code and st.session_state.drive_service is None:
         st.query_params.clear()
         st.rerun()
 
-# --- Huvudlayout ---
 if st.session_state.drive_service is None:
-    # Inloggningssida
     st.markdown("### Välkommen!")
     auth_url = get_auth_url()
     if auth_url: st.link_button("Logga in med Google", auth_url)
     else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
 else:
-    # Huvudapplikation
     col_main, col_sidebar = st.columns([3, 1])
 
     with col_sidebar:
@@ -127,7 +124,7 @@ else:
                             st.session_state.story_items = None
                             st.rerun()
         
-# VERKTYG FÖR ORGANISERING
+        # VERKTYG FÖR ORGANISERING
         if st.session_state.story_items is not None and st.session_state.organize_mode:
             st.divider()
             st.markdown("### Verktyg")
@@ -165,14 +162,14 @@ else:
                         st.session_state.unsorted_items = sorted(unsorted, key=lambda x: x['filename'].lower())
                 st.rerun()
 
-            st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
-            st.info(f"{len(st.session_state.selected_indices)} objekt valda.")
+            selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
+            st.info(f"{len(selected_indices)} objekt valda.")
             
             tool_cols = st.columns(2)
             with tool_cols[0]:
-                if st.button("Klipp ut 📤", disabled=not st.session_state.selected_indices, use_container_width=True):
-                    st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(list(st.session_state.selected_indices))]
-                    for i in sorted(list(st.session_state.selected_indices), reverse=True): del st.session_state.story_items[i]
+                if st.button("Klipp ut 📤", disabled=not selected_indices, use_container_width=True):
+                    st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(list(selected_indices))]
+                    for i in sorted(list(selected_indices), reverse=True): del st.session_state.story_items[i]
                     st.session_state.selected_indices = set()
                     pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                     st.rerun()
@@ -186,9 +183,8 @@ else:
             
             if st.session_state.clipboard: st.success(f"{len(st.session_state.clipboard)} i urklipp.")
             
-            if st.button("Ta bort 🗑️", type="primary", disabled=not st.session_state.selected_indices, use_container_width=True):
-                indices_to_remove = sorted(list(st.session_state.selected_indices), reverse=True)
-                for i in indices_to_remove:
+            if st.button("Ta bort 🗑️", type="primary", disabled=not selected_indices, use_container_width=True):
+                for i in sorted(list(selected_indices), reverse=True):
                     st.session_state[f"select_{st.session_state.story_items[i]['id']}"] = False
                     del st.session_state.story_items[i]
                 st.session_state.selected_indices = set()
@@ -212,19 +208,20 @@ else:
                 
                 settings = {'quality': settings_quality, 'max_size_mb': settings_max_size}
                 
-                result = pdf_motor.generate_pdfs_from_story(
-                    st.session_state.drive_service,
-                    st.session_state.story_items,
-                    settings,
-                    update_progress
-                )
+                with st.spinner("Genererar PDF-album... Detta kan ta flera minuter."):
+                    result = pdf_motor.generate_pdfs_from_story(
+                        st.session_state.drive_service,
+                        st.session_state.story_items,
+                        settings,
+                        update_progress
+                    )
                 
                 if 'error' in result:
                     st.error(result['error'])
                 elif 'pdfs' in result:
                     st.session_state.generated_pdfs = result['pdfs']
                 
-                progress_bar_area.empty() # Ta bort förloppsindikatorn när klar
+                progress_bar_area.empty()
 
             if 'generated_pdfs' in st.session_state and st.session_state.generated_pdfs:
                 st.success("Dina PDF-album är klara!")
@@ -239,12 +236,11 @@ else:
                         key=f"download_{i}"
                     )
 
-with col_main:
-        # --- SNABBSORTERINGS-LÄGE ---
+    with col_main:
+        # SNABBSORTERINGS-LÄGE
         if st.session_state.story_items is not None and st.session_state.quick_sort_mode:
             st.warning("SNABBSORTERINGS-LÄGE AKTIVT")
             if st.button("✅ Avsluta Snabbsortering och spara"):
-                # Lägg tillbaka eventuellt osorterade objekt i slutet av listan
                 if st.session_state.unsorted_items:
                     st.session_state.story_items.extend(st.session_state.unsorted_items)
                 pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
@@ -264,18 +260,17 @@ with col_main:
                 st.markdown("#### Din Berättelse (i ordning)")
                 with st.container(height=600):
                     if not st.session_state.story_items: st.info("Börja genom att klicka på filer i vänstra listan.")
-                    # Visa den visuella listan även här
                     for item in st.session_state.story_items:
                         with st.container():
                             i_col1, i_col2 = st.columns([1,5])
-                            with i_col1:
-                                if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=75)
-                                elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 32px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-                                elif item.get('type') == 'text': st.markdown("<p style='font-size: 32px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                            if item.get('type') == 'image' and item.get('thumbnail'): i_col1.image(item['thumbnail'], width=75)
+                            elif item.get('type') == 'pdf': i_col1.markdown("<p style='font-size: 32px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                            elif item.get('type') == 'text' and 'content' in item: i_col1.info(item.get('content'))
+                            elif item.get('type') == 'text': i_col1.markdown("<p style='font-size: 32px; text-align: center;'>📄</p>", unsafe_allow_html=True)
                             with i_col2:
                                 st.write(item.get('filename', 'Okänt filnamn'))
 
-        # --- NORMAL VISUELL LISTA / ORGANISERINGS-LÄGE ---
+        # NORMAL VISUELL LISTA / ORGANISERINGS-LÄGE
         elif st.session_state.story_items is not None:
             st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
             st.markdown("---")
@@ -291,8 +286,20 @@ with col_main:
                         with col_list[-2]:
                             if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
                             elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                            elif item.get('type') == 'text' and 'content' in item: st.info(item.get('content'))
                             elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px; text-align: center;'>📄</p>", unsafe_allow_html=True)
-                        with col_list[-1]: st.write(item.get('filename', 'Okänt filnamn'))
+                        with col_list[-1]: 
+                            st.write(item.get('filename', 'Okänt filnamn'))
+                            if st.session_state.organize_mode and item['type'] == 'pdf':
+                                if st.button("Dela upp ✂️", key=f"split_{item['id']}", help="Ersätter denna fil med dess enskilda sidor"):
+                                    with st.spinner(f"Delar upp {item['filename']}..."):
+                                        result = pdf_motor.split_pdf_and_upload(st.session_state.drive_service, item['id'], item['filename'], st.session_state.current_folder_id)
+                                        if 'error' in result: st.error(result['error'])
+                                        elif 'new_files' in result:
+                                            st.session_state.story_items = st.session_state.story_items[:i] + result['new_files'] + st.session_state.story_items[i+1:]
+                                            pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                                            st.success("PDF uppdelad!")
+                                            reload_story_items()
                     st.divider()
         else:
             st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in denna mapp'.")

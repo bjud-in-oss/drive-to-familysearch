@@ -16,15 +16,13 @@ SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
 PROJECT_FILE_NAME = '.storyproject.json'
 MM_TO_PT = 2.83465
-
-# Standardstilar (kan göras redigerbara i en framtida fas)
 STYLES = {
     'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
     'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
     'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
 }
 
-# --- Klasser och hjälpfunktioner porterade från originalskript ---
+# --- Klasser och Hjälpfunktioner ---
 
 class PreciseFPDF(FPDF):
     """En anpassad FPDF-klass för bättre textkontroll."""
@@ -55,7 +53,8 @@ def download_file_content(service, file_id):
         print(f"Kunde inte ladda ner fil {file_id}: {e}")
         return None
 
-# Funktioner för att hantera enheter, mappar och projektfil (oförändrade)
+# --- Funktioner för att hantera Google Drive-objekt ---
+
 def get_available_drives(service):
     drives = [{'id': 'root', 'name': 'Min enhet'}]
     try:
@@ -97,8 +96,7 @@ def save_story_order(service, folder_id, story_items):
         response = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, fields="files(id)").execute()
         existing_files = response.get('files', [])
         if existing_files:
-            file_id = existing_files[0]['id']
-            service.files().update(fileId=file_id, media_body=media_body, supportsAllDrives=True).execute()
+            service.files().update(fileId=existing_files[0]['id'], media_body=media_body, supportsAllDrives=True).execute()
         else:
             file_metadata = {'name': PROJECT_FILE_NAME, 'parents': [folder_id]}
             service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id').execute()
@@ -106,20 +104,21 @@ def save_story_order(service, folder_id, story_items):
     except HttpError as e:
         return {'error': f"Kunde inte spara projektfilen: {e}"}
 
-# Huvudfunktion för att hämta innehåll från en mapp
 def get_content_units_from_folder(service, folder_id):
     try:
-        # Hämta fil-metadata
         query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
         items = results.get('files', [])
+        
         unit_map = {item.get('name'): item for item in items if item.get('name') != PROJECT_FILE_NAME}
         
         saved_order = load_story_order(service, folder_id)
         final_google_items = []
+        
         if saved_order:
             ordered_map = {filename: unit_map.pop(filename) for filename in saved_order if filename in unit_map}
             final_google_items.extend(list(ordered_map.values()))
+        
         remaining_items = sorted(list(unit_map.values()), key=lambda x: x.get('name', '').lower())
         final_google_items.extend(remaining_items)
 
@@ -130,10 +129,8 @@ def get_content_units_from_folder(service, folder_id):
             if ext in SUPPORTED_EXTENSIONS:
                 unit = {'filename': filename, 'id': item.get('id'), 'type': 'unknown', 'thumbnail': item.get('thumbnailLink')}
                 if ext in SUPPORTED_IMAGE_EXTENSIONS: unit['type'] = 'image'
-                elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
                 elif ext in SUPPORTED_TEXT_EXTENSIONS:
                     unit['type'] = 'text'
-                    # NYTT: Ladda ner innehållet i textfilen
                     try:
                         request = service.files().get_media(fileId=item.get('id'))
                         fh = io.BytesIO()
@@ -143,9 +140,10 @@ def get_content_units_from_folder(service, folder_id):
                         unit['content'] = fh.getvalue().decode('utf-8')
                     except Exception as e:
                         unit['content'] = f"Fel vid läsning av fil: {e}"
-                
+                elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
                 story_units.append(unit)
         return {'units': story_units}
+            
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
 
 def upload_new_text_file(service, folder_id, filename, content):
@@ -200,9 +198,6 @@ def split_pdf_and_upload(service, file_id, original_filename, folder_id):
     except Exception as e:
         return {'error': f"Kunde inte dela upp PDF: {e}"}
 
-
-# --- NY HUVUDFUNKTION FÖR PDF-GENERERING ---
-
 def generate_pdfs_from_story(service, story_items, settings, progress_callback):
     """Huvudfunktionen som bygger PDF-albumen."""
     doc_width_mm = 210
@@ -227,6 +222,7 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
             if item['type'] == 'image':
                 with Image.open(content_buffer) as img:
                     img_w, img_h = img.size
+                    if img_w == 0: continue
                     aspect_ratio = img_h / img_w
                     img_height_mm = content_width_mm * aspect_ratio
                     page_height_mm = img_height_mm + (2 * margin_mm)
@@ -247,8 +243,8 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
                 temp_calc_pdf = FPDF('P', 'mm', 'A4'); temp_calc_pdf.add_page()
                 temp_calc_pdf.set_font(style.get('font'), style.get('style'), style.get('size'))
                 lines = temp_calc_pdf.multi_cell(w=content_width_mm, h=style.get('spacing'), text=text_content, dry_run=True, output='LINES')
-                text_height_mm = len(lines) * style.get('spacing')
-                page_height_mm = text_height_mm + (2 * margin_mm)
+                text_height_mm = len(lines) * style.get('spacing', 6)
+                page_height_mm = text_height_mm + (2 * margin_mm) + 5 # Extra marginal
 
                 temp_page_pdf = PreciseFPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
                 temp_page_pdf.add_page()
@@ -259,6 +255,7 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
                     page_writer.add_page(PdfReader(f).pages[0])
             
             if len(page_writer.pages) > 0:
+                # Skapa en temporär writer för att testa den nya storleken
                 test_writer = PdfWriter()
                 for page in current_pdf_writer.pages: test_writer.add_page(page)
                 test_writer.add_page(page_writer.pages[0])
@@ -268,14 +265,17 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
                     current_size = temp_buffer.tell()
 
                 if current_size > max_size_bytes and items_in_current_pdf > 0:
+                    # Spara den föregående PDF:en, den är full
                     final_pdf_buffer = io.BytesIO()
                     current_pdf_writer.write(final_pdf_buffer)
                     final_pdf_buffer.seek(0)
                     generated_pdfs.append(final_pdf_buffer)
                     
+                    # Starta en ny PDF med den nuvarande sidan
                     current_pdf_writer = page_writer
                     items_in_current_pdf = 1
                 else:
+                    # Lägg till sidan i den nuvarande PDF:en
                     current_pdf_writer.add_page(page_writer.pages[0])
                     items_in_current_pdf += 1
         except Exception as e:
