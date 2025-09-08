@@ -5,3 +5,4 @@ requests
 Pillow
 pypdf
 fpdf2
+PyMuPDF
