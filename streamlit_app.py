@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import requests
 from urllib.parse import urlencode
+import re
 from PIL import Image
 
 # Importera Googles bibliotek
@@ -39,15 +40,9 @@ def exchange_code_for_service(auth_code):
         st.error(f"Ett fel inträffade vid inloggning: {e}")
         return None
 
-def reload_story_items(show_spinner=True):
+def reload_story_items():
     """Hjälpfunktion för att ladda om fillistan efter en ändring."""
-    message = "Uppdaterar fillista..."
-    if show_spinner:
-        with st.spinner(message):
-            result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
-            if 'error' in result: st.error(result['error'])
-            elif 'units' in result: st.session_state.story_items = result['units']
-    else:
+    with st.spinner("Uppdaterar fillista..."):
         result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
         if 'error' in result: st.error(result['error'])
         elif 'units' in result: st.session_state.story_items = result['units']
