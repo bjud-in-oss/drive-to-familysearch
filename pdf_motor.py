@@ -4,6 +4,7 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
 import json
+import re
 from pypdf import PdfReader, PdfWriter
 from fpdf import FPDF, XPos, YPos
 from PIL import Image
@@ -144,39 +145,6 @@ def get_content_units_from_folder(service, folder_id):
             
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
 
-def render_pdf_page_as_image(service, file_id, page_num=0):
-    """Hämtar en PDF och renderar en specifik sida som en bild."""
-    try:
-        # Ladda ner hela PDF-filens innehåll i minnet
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-        fh.seek(0)
-
-        # Öppna PDF-datan med PyMuPDF
-        doc = fitz.open(stream=fh, filetype="pdf")
-
-        # Säkerställ att sidnumret är giltigt
-        if page_num < 0 or page_num >= len(doc):
-            page_num = 0 # Fallback till första sidan
-
-        page = doc.load_page(page_num)
-        
-        # Rendera sidan till en bild (pixmap) med högre upplösning
-        pix = page.get_pixmap(dpi=150)
-        
-        # Konvertera till ett Pillow Image-objekt
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        
-        doc.close()
-        return {'image': img, 'page_count': len(doc)}
-        
-    except Exception as e:
-        return {'error': f"Kunde inte rendera PDF-sida: {e}"}
-
 def upload_new_text_file(service, folder_id, filename, content):
     """Laddar upp en ny textfil till Google Drive."""
     try:
@@ -227,7 +195,93 @@ def split_pdf_and_upload(service, file_id, original_filename, folder_id):
     except Exception as e:
         return {'error': f"Kunde inte dela upp PDF: {e}"}
 
-def generate
+def generate_pdfs_from_story(service, story_items, settings, progress_callback):
+    """Huvudfunktionen som bygger PDF-albumen."""
+    doc_width_mm = 210
+    margin_mm = 10
+    content_width_mm = doc_width_mm - (2 * margin_mm)
+    max_size_bytes = settings.get('max_size_mb', 15) * 1024 * 1024
+    quality = settings.get('quality', 85)
+
+    generated_pdfs = []
+    current_pdf_writer = PdfWriter()
+    items_in_current_pdf = 0
+    total_items = len(story_items)
+
+    for i, item in enumerate(story_items):
+        progress_callback(i / total_items, f"Bearbetar {item['filename']}...")
+        content_buffer = download_file_content(service, item['id'])
+        if not content_buffer: continue
+
+        page_writer = PdfWriter()
+        
+        try:
+            if item['type'] == 'image':
+                with Image.open(content_buffer) as img:
+                    img_w, img_h = img.size
+                    if img_w == 0: continue
+                    aspect_ratio = img_h / img_w
+                    img_height_mm = content_width_mm * aspect_ratio
+                    page_height_mm = img_height_mm + (2 * margin_mm)
+                    
+                    temp_page_pdf = FPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
+                    temp_page_pdf.add_page()
+                    img_byte_arr = io.BytesIO()
+                    img.convert('RGB').save(img_byte_arr, format='JPEG', quality=quality)
+                    temp_page_pdf.image(img_byte_arr, x=margin_mm, y=margin_mm, w=content_width_mm)
+                    
+                    with io.BytesIO(temp_page_pdf.output()) as f:
+                        page_writer.add_page(PdfReader(f).pages[0])
+
+            elif item['type'] == 'text':
+                text_content = content_buffer.read().decode('utf-8')
+                style = STYLES.get(parse_style_from_filename(item['filename']), STYLES['p'])
+                
+                temp_calc_pdf = FPDF('P', 'mm', 'A4'); temp_calc_pdf.add_page()
+                temp_calc_pdf.set_font(style.get('font'), style.get('style'), style.get('size'))
+                lines = temp_calc_pdf.multi_cell(w=content_width_mm, h=style.get('spacing'), text=text_content, dry_run=True, output='LINES')
+                text_height_mm = len(lines) * style.get('spacing', 6)
+                page_height_mm = text_height_mm + (2 * margin_mm) + 5 # Extra marginal
+
+                temp_page_pdf = PreciseFPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
+                temp_page_pdf.add_page()
+                temp_page_pdf.set_xy(margin_mm, margin_mm)
+                temp_page_pdf.add_styled_text(text_content, style, content_width_mm)
+                
+                with io.BytesIO(temp_page_pdf.output()) as f:
+                    page_writer.add_page(PdfReader(f).pages[0])
+            
+            if len(page_writer.pages) > 0:
+                test_writer = PdfWriter()
+                for page in current_pdf_writer.pages: test_writer.add_page(page)
+                test_writer.add_page(page_writer.pages[0])
+                
+                with io.BytesIO() as temp_buffer:
+                    test_writer.write(temp_buffer)
+                    current_size = temp_buffer.tell()
+
+                if current_size > max_size_bytes and items_in_current_pdf > 0:
+                    final_pdf_buffer = io.BytesIO()
+                    current_pdf_writer.write(final_pdf_buffer)
+                    final_pdf_buffer.seek(0)
+                    generated_pdfs.append(final_pdf_buffer)
+                    
+                    current_pdf_writer = page_writer
+                    items_in_current_pdf = 1
+                else:
+                    current_pdf_writer.add_page(page_writer.pages[0])
+                    items_in_current_pdf += 1
+        except Exception as e:
+            print(f"Kunde inte bearbeta {item['filename']}: {e}")
+
+    if items_in_current_pdf > 0:
+        final_pdf_buffer = io.BytesIO()
+        current_pdf_writer.write(final_pdf_buffer)
+        final_pdf_buffer.seek(0)
+        generated_pdfs.append(final_pdf_buffer)
+        
+    progress_callback(1.0, f"Klar! {len(generated_pdfs)} PDF-filer skapade.")
+    return {'pdfs': generated_pdfs}
 
 def render_pdf_page_as_image(service, file_id, page_num):
     """Hämtar en PDF och renderar en specifik sida som en bild."""
@@ -236,23 +290,18 @@ def render_pdf_page_as_image(service, file_id, page_num):
         if not pdf_buffer:
             raise FileNotFoundError("Kunde inte ladda ner PDF-filen.")
 
-        # Öppna PDF-datan med PyMuPDF
         doc = fitz.open(stream=pdf_buffer, filetype="pdf")
-
-        # Säkerställ att sidnumret är giltigt
-        if page_num < 0 or page_num >= len(doc):
-            raise ValueError(f"Ogiltigt sidnummer: {page_num}. PDF:en har {len(doc)} sidor.")
+        
+        page_count = len(doc)
+        if page_num < 0 or page_num >= page_count:
+            page_num = 0
 
         page = doc.load_page(page_num)
-        
-        # Rendera sidan till en bild (pixmap)
-        pix = page.get_pixmap()
-        
-        # Konvertera till ett Pillow Image-objekt
+        pix = page.get_pixmap(dpi=150)
         img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
         
         doc.close()
-        return {'image': img}
+        return {'image': img, 'page_count': page_count}
         
     except Exception as e:
         return {'error': f"Kunde inte rendera PDF-sida: {e}"}
