@@ -1,148 +1,71 @@
 import os
-
 from pathlib import Path
-
 from googleapiclient.errors import HttpError
-
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
-
 import io
-
 import json
-
 import re
-
 from pypdf import PdfReader, PdfWriter
-
 from fpdf import FPDF, XPos, YPos
-
 from PIL import Image
 
-
-
 # Konfiguration
-
 SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
-
 SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
-
 SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
-
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
-
 PROJECT_FILE_NAME = '.storyproject.json'
-
 MM_TO_PT = 2.83465
-
-
-
-# Standardstilar (kan göras redigerbara i en framtida fas)
-
 STYLES = {
-
-    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
-
-    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
-
-    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
-
+    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
+    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
+    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
 }
 
-
-
-# --- Klasser och hjälpfunktioner porterade från originalskript ---
-
-
-
 class PreciseFPDF(FPDF):
-
     """En anpassad FPDF-klass för bättre textkontroll."""
-
     def add_styled_text(self, text, style, content_width_mm):
-
         self.set_font(style.get('font', 'Helvetica'), style.get('style', ''), style.get('size', 11))
-
         self.multi_cell(content_width_mm, style.get('spacing', 6), text, align=style.get('align', 'J'))
 
-
-
 def parse_style_from_filename(filename):
-
     """Hämtar stil-taggen från ett filnamn."""
-
     stem = Path(filename).stem.lower()
-
     parts = stem.split('.')
-
     if len(parts) > 1 and Path(filename).suffix.lower() == '.txt':
-
         return parts[-1]
-
     return 'p'
 
-
-
 def download_file_content(service, file_id):
-
     """Hämtar det fullständiga innehållet av en fil som bytes."""
-
     try:
-
         request = service.files().get_media(fileId=file_id)
-
         fh = io.BytesIO()
-
         downloader = MediaIoBaseDownload(fh, request)
-
         done = False
-
         while not done:
-
             status, done = downloader.next_chunk()
-
         fh.seek(0)
-
         return fh
-
     except HttpError as e:
-
         print(f"Kunde inte ladda ner fil {file_id}: {e}")
-
         return None
 
-
-
 # Funktioner för att hantera enheter, mappar och projektfil (oförändrade)
-
 def get_available_drives(service):
-
     drives = [{'id': 'root', 'name': 'Min enhet'}]
-
     try:
-
         response = service.drives().list().execute()
-
         drives.extend(response.get('drives', []))
-
         return drives
-
     except HttpError as e: return {'error': f"Kunde inte hämta enheter: {e}"}
 
-
-
 def list_folders(service, folder_id='root'):
-
     try:
-
         query = f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
-
         results = service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, spaces='drive', fields='files(id, name)').execute()
-
         return results.get('files', [])
-
     except HttpError as e: return {'error': f"Kunde inte hämta mappar: {e}"}
-
-
 
 def load_story_order(service, folder_id):
 
