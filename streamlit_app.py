@@ -182,27 +182,44 @@ else:
 
     # Huvudfönstret
     if st.session_state.story_items is None:
-        st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in filer...'")
+        st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp...")
     else:
+        st.toggle("Ändra ordning & innehåll", key="organize_mode")
+        st.divider()
         st.markdown("### Berättelsens flöde")
+        
         if not st.session_state.story_items:
             st.info("Inga relevanta filer hittades i denna mapp.")
         else:
+            # Använd en cache för att undvika att rendera om samma PDF-sida
+            @st.cache_data
+            def get_pdf_thumbnail(file_id):
+                res = pdf_motor.render_pdf_page_as_image(st.session_state.drive_service, file_id, 0)
+                if 'image' in res:
+                    return res['image']
+                return None
+
             for item in st.session_state.story_items:
                 with st.container():
-                    col1, col2, col3 = st.columns([1, 4, 1])
+                    col1, col2 = st.columns([1, 4]) # Justerad kolumnbredd
                     with col1:
-                        if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=128)
-                        elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 60px; text-align: center;'>📑</p>", unsafe_allow_html=True)
-                        elif item.get('type') == 'text': st.markdown("<p style='font-size: 60px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                        if item.get('type') == 'image' and item.get('thumbnail'):
+                            st.image(item['thumbnail'], use_column_width='auto')
+                        
+                        elif item.get('type') == 'pdf':
+                            # Hämta och visa en riktig miniatyrbild av första sidan
+                            pdf_thumb = get_pdf_thumbnail(item['id'])
+                            if pdf_thumb:
+                                st.image(pdf_thumb, use_column_width='auto')
+                            else:
+                                st.markdown("<p style='font-size: 60px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+
+                        elif item.get('type') == 'text' and item.get('content'):
+                            st.info(item.get('content'))
+                        elif item.get('type') == 'text':
+                             st.markdown("<p style='font-size: 60px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                    
                     with col2:
-                        st.write("")
+                        st.write("") 
                         st.write(item.get('filename', 'Okänt filnamn'))
-                    with col3:
-                        if item.get('type') == 'pdf':
-                            if st.button("Förhandsgranska 👁️", key=f"preview_{item['id']}"):
-                                st.session_state.preview_item = item
-                                st.session_state.preview_page_num = 0
-                                st.session_state.preview_images = {}
-                                st.rerun()
                 st.divider()
