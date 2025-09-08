@@ -4,7 +4,6 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
 import json
-import re
 from pypdf import PdfReader, PdfWriter
 from fpdf import FPDF, XPos, YPos
 from PIL import Image
@@ -144,6 +143,39 @@ def get_content_units_from_folder(service, folder_id):
         return {'units': story_units}
             
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
+
+def render_pdf_page_as_image(service, file_id, page_num=0):
+    """Hämtar en PDF och renderar en specifik sida som en bild."""
+    try:
+        # Ladda ner hela PDF-filens innehåll i minnet
+        request = service.files().get_media(fileId=file_id)
+        fh = io.BytesIO()
+        downloader = MediaIoBaseDownload(fh, request)
+        done = False
+        while not done:
+            status, done = downloader.next_chunk()
+        fh.seek(0)
+
+        # Öppna PDF-datan med PyMuPDF
+        doc = fitz.open(stream=fh, filetype="pdf")
+
+        # Säkerställ att sidnumret är giltigt
+        if page_num < 0 or page_num >= len(doc):
+            page_num = 0 # Fallback till första sidan
+
+        page = doc.load_page(page_num)
+        
+        # Rendera sidan till en bild (pixmap) med högre upplösning
+        pix = page.get_pixmap(dpi=150)
+        
+        # Konvertera till ett Pillow Image-objekt
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        
+        doc.close()
+        return {'image': img, 'page_count': len(doc)}
+        
+    except Exception as e:
+        return {'error': f"Kunde inte rendera PDF-sida: {e}"}
 
 def upload_new_text_file(service, folder_id, filename, content):
     """Laddar upp en ny textfil till Google Drive."""
