@@ -8,6 +8,7 @@ import re
 from pypdf import PdfReader, PdfWriter
 from fpdf import FPDF, XPos, YPos
 from PIL import Image
+import fitz  # PyMuPDF
 
 # Konfiguration
 SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
@@ -109,12 +110,10 @@ def get_content_units_from_folder(service, folder_id):
         query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
         items = results.get('files', [])
-        
         unit_map = {item.get('name'): item for item in items if item.get('name') != PROJECT_FILE_NAME}
         
         saved_order = load_story_order(service, folder_id)
         final_google_items = []
-        
         if saved_order:
             ordered_map = {filename: unit_map.pop(filename) for filename in saved_order if filename in unit_map}
             final_google_items.extend(list(ordered_map.values()))
@@ -161,7 +160,6 @@ def upload_new_text_file(service, folder_id, filename, content):
 def split_pdf_and_upload(service, file_id, original_filename, folder_id):
     """Hämtar, delar upp och laddar upp sidorna i en PDF."""
     try:
-        # Hämta original-PDF
         request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
         downloader = MediaIoBaseDownload(fh, request)
@@ -174,7 +172,6 @@ def split_pdf_and_upload(service, file_id, original_filename, folder_id):
         newly_created_files = []
         base_name = os.path.splitext(original_filename)[0]
         
-        # Loopa, skapa och ladda upp varje sida
         for i, page in enumerate(reader.pages):
             writer = PdfWriter()
             writer.add_page(page)
@@ -255,7 +252,6 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
                     page_writer.add_page(PdfReader(f).pages[0])
             
             if len(page_writer.pages) > 0:
-                # Skapa en temporär writer för att testa den nya storleken
                 test_writer = PdfWriter()
                 for page in current_pdf_writer.pages: test_writer.add_page(page)
                 test_writer.add_page(page_writer.pages[0])
@@ -265,17 +261,14 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
                     current_size = temp_buffer.tell()
 
                 if current_size > max_size_bytes and items_in_current_pdf > 0:
-                    # Spara den föregående PDF:en, den är full
                     final_pdf_buffer = io.BytesIO()
                     current_pdf_writer.write(final_pdf_buffer)
                     final_pdf_buffer.seek(0)
                     generated_pdfs.append(final_pdf_buffer)
                     
-                    # Starta en ny PDF med den nuvarande sidan
                     current_pdf_writer = page_writer
                     items_in_current_pdf = 1
                 else:
-                    # Lägg till sidan i den nuvarande PDF:en
                     current_pdf_writer.add_page(page_writer.pages[0])
                     items_in_current_pdf += 1
         except Exception as e:
@@ -289,3 +282,26 @@ def generate_pdfs_from_story(service, story_items, settings, progress_callback):
         
     progress_callback(1.0, f"Klar! {len(generated_pdfs)} PDF-filer skapade.")
     return {'pdfs': generated_pdfs}
+
+def render_pdf_page_as_image(service, file_id, page_num):
+    """Hämtar en PDF och renderar en specifik sida som en bild."""
+    try:
+        pdf_buffer = download_file_content(service, file_id)
+        if not pdf_buffer:
+            raise FileNotFoundError("Kunde inte ladda ner PDF-filen.")
+
+        doc = fitz.open(stream=pdf_buffer, filetype="pdf")
+        
+        page_count = len(doc)
+        if page_num < 0 or page_num >= page_count:
+            page_num = 0
+
+        page = doc.load_page(page_num)
+        pix = page.get_pixmap(dpi=150)
+        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
+        
+        doc.close()
+        return {'image': img, 'page_count': page_count}
+        
+    except Exception as e:
+        return {'error': f"Kunde inte rendera PDF-sida: {e}"}
