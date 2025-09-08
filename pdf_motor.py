@@ -14,7 +14,11 @@ SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
 PROJECT_FILE_NAME = '.storyproject.json'
 MM_TO_PT = 2.83465
-
+STYLES = {
+    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
+    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
+    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
+}
 
 def get_available_drives(service):
     drives = [{'id': 'root', 'name': 'Min enhet'}]
@@ -24,15 +28,6 @@ def get_available_drives(service):
         return drives
     except HttpError as e:
         return {'error': f"Kunde inte hämta lista på enheter: {e}"}
-
-# Standardstilar (kan göras redigerbara i en framtida fas)
-STYLES = {
-    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
-    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
-    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
-}
-
-# --- Klasser och hjälpfunktioner porterade från originalskript ---
 
 class PreciseFPDF(FPDF):
 
