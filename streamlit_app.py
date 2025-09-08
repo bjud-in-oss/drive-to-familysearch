@@ -47,3 +47,164 @@ def reload_story_items():
         if 'error' in result: st.error(result['error'])
         elif 'units' in result: st.session_state.story_items = result['units']
     st.rerun()
+
+# --- Applikationens Flöde ---
+st.set_page_config(layout="wide")
+st.title("Berättelsebyggaren")
+
+# Session state – robust initialisering
+def initialize_state():
+    defaults = {
+        'drive_service': None, 'user_email': None, 'story_items': None,
+        'path_history': [], 'current_folder_id': None, 'current_folder_name': None,
+        'organize_mode': False, 'selected_indices': set(), 'clipboard': [],
+        'quick_sort_mode': False, 'unsorted_items': [],
+        'preview_item': None, 'preview_page_num': 0, 'preview_max_pages': 0, 'preview_images': {}
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+initialize_state()
+
+# Hantera callback från Google
+auth_code = st.query_params.get('code')
+if auth_code and st.session_state.drive_service is None:
+    with st.spinner("Verifierar inloggning..."):
+        st.session_state.drive_service = exchange_code_for_service(auth_code)
+        if st.session_state.drive_service:
+            try:
+                user_info = st.session_state.drive_service.about().get(fields='user').execute()
+                st.session_state.user_email = user_info['user']['emailAddress']
+            except Exception:
+                st.session_state.user_email = "Okänd"
+        st.query_params.clear()
+        st.rerun()
+
+# --- Huvudlayout och Gränssnitt ---
+
+def render_previewer():
+    """Ritar upp förhandsgranskaren i en dialogruta."""
+    item = st.session_state.preview_item
+    st.header(f"Förhandsgranskning: {item['filename']}")
+    
+    page_num = st.session_state.preview_page_num
+    
+    # Hämta och cacha den renderade bilden för sidan
+    if page_num not in st.session_state.preview_images:
+        with st.spinner(f"Renderar sida {page_num + 1}..."):
+            result = pdf_motor.render_pdf_page_as_image(
+                st.session_state.drive_service,
+                item['id'],
+                page_num
+            )
+            if 'error' in result:
+                st.error(result['error'])
+                return
+            st.session_state.preview_images[page_num] = result['image']
+            st.session_state.preview_max_pages = result['page_count']
+
+    # Visa bilden
+    if st.session_state.preview_images.get(page_num):
+        st.image(st.session_state.preview_images[page_num], use_column_width=True)
+
+    # Navigationsknappar
+    max_pages = st.session_state.preview_max_pages
+    st.write(f"Sida {page_num + 1} av {max_pages}")
+    
+    col1, col2, col3 = st.columns([1,1,5])
+    if col1.button("⬅️ Föregående", disabled=(page_num <= 0)):
+        st.session_state.preview_page_num -= 1
+        st.rerun()
+        
+    if col2.button("Nästa ➡️", disabled=(page_num >= max_pages - 1)):
+        st.session_state.preview_page_num += 1
+        st.rerun()
+
+# Huvudlogik: Avgör vilken vy som ska visas
+if st.session_state.drive_service is None:
+    # Användaren är INTE inloggad
+    st.markdown("### Välkommen!")
+    auth_url = get_auth_url()
+    if auth_url: st.link_button("Logga in med Google", auth_url)
+    else: st.error("Fel: Appen saknar konfiguration i 'Secrets'.")
+
+elif st.session_state.preview_item:
+    # Användaren är inloggad OCH förhandsgranskar en PDF
+    with st.dialog("PDF-förhandsgranskning"):
+        render_previewer()
+        if st.button("Stäng förhandsgranskning", use_container_width=True):
+            st.session_state.preview_item = None
+            st.rerun()
+else:
+    # Användaren är inloggad och i huvudvyn
+    col_main, col_sidebar = st.columns([3, 1])
+
+    with col_sidebar:
+        st.markdown(f"**Ansluten som:**\n{st.session_state.user_email}")
+        st.divider()
+        st.markdown("### Välj Källmapp")
+        
+        if st.session_state.current_folder_id is None:
+            drives = pdf_motor.get_available_drives(st.session_state.drive_service)
+            if 'error' in drives: st.error(drives['error'])
+            else:
+                for drive in sorted(drives, key=lambda x: x.get('name', '').lower()):
+                    icon = "📁" if drive.get('id') == 'root' else "🏢"
+                    if st.button(f"{icon} {drive.get('name', 'Okänd enhet')}", use_container_width=True, key=drive.get('id')):
+                        st.session_state.current_folder_id, st.session_state.current_folder_name = drive.get('id'), drive.get('name')
+                        st.session_state.path_history = []
+                        st.rerun()
+        else:
+            path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
+            st.write(f"**Plats:** `{' / '.join(path_parts)}`")
+            c1, c2 = st.columns(2)
+            if c1.button("⬅️ Byt enhet", use_container_width=True):
+                st.session_state.current_folder_id, st.session_state.path_history, st.session_state.story_items = None, [], None
+                st.rerun()
+            if c2.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
+                prev_id, prev_name = st.session_state.path_history.pop()
+                st.session_state.current_folder_id, st.session_state.current_folder_name = prev_id, prev_name
+                st.session_state.story_items = None
+                st.rerun()
+
+            if st.button("✅ Läs in filer från denna mapp", type="primary", use_container_width=True):
+                reload_story_items()
+            
+            folders = pdf_motor.list_folders(st.session_state.drive_service, st.session_state.current_folder_id)
+            if 'error' in folders: st.error(folders['error'])
+            elif folders:
+                st.markdown("*Undermappar:*")
+                for folder in sorted(folders, key=lambda x: x.get('name', '').lower()):
+                    if st.button(f"📁 {folder.get('name', 'Okänd mapp')}", key=folder.get('id'), use_container_width=True):
+                        st.session_state.path_history.append((st.session_state.current_folder_id, st.session_state.current_folder_name))
+                        st.session_state.current_folder_id, st.session_state.current_folder_name = folder.get('id'), folder.get('name')
+                        st.session_state.story_items = None
+                        st.rerun()
+    
+    with col_main:
+        if st.session_state.story_items is None:
+            st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in filer...'")
+        else:
+            st.markdown("### Berättelsens flöde")
+            if not st.session_state.story_items:
+                st.info("Inga relevanta filer hittades i denna mapp.")
+            else:
+                for item in st.session_state.story_items:
+                    with st.container():
+                        col1, col2, col3 = st.columns([1, 4, 1])
+                        with col1:
+                            if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=128)
+                            elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 60px; text-align: center;'>📑</p>", unsafe_allow_html=True)
+                            elif item.get('type') == 'text': st.markdown("<p style='font-size: 60px; text-align: center;'>📄</p>", unsafe_allow_html=True)
+                        with col2:
+                            st.write("")
+                            st.write(item.get('filename', 'Okänt filnamn'))
+                        with col3:
+                            if item.get('type') == 'pdf':
+                                if st.button("Förhandsgranska 👁️", key=f"preview_{item['id']}"):
+                                    st.session_state.preview_item = item
+                                    st.session_state.preview_page_num = 0
+                                    st.session_state.preview_images = {}
+                                    st.rerun()
+                    st.divider()
