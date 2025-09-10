@@ -1,10 +1,11 @@
 import streamlit as st
 
-# Importera våra egna, välorganiserade moduler
+# Importera våra egna, noggrant uppdelade moduler
 import google_auth
 import state_manager
 import ui_sidebar
-import ui_main_panel
+import ui_quicksort_panel # Importera den nya panelen
+import ui_story_panel     # Importera den andra nya panelen
 
 def render_login_page():
     """Visar den enkla inloggningssidan."""
@@ -48,7 +49,14 @@ else:
     col_sidebar, col_main = st.columns([1, 2])
 
     with col_sidebar:
+        # Sidopanelen är alltid densamma
         ui_sidebar.render_sidebar()
 
     with col_main:
-        ui_main_panel.render_main_content()
+        # Huvudpanelen ändras beroende på läge
+        if st.session_state.get('quick_sort_mode', False):
+            ui_quicksort_panel.render_quicksort_panel()
+        elif st.session_state.story_items is not None:
+            ui_story_panel.render_story_panel()
+        else:
+            st.info("⬅️ Använd filbläddraren för att börja.")
