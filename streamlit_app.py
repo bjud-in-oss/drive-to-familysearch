@@ -2,12 +2,11 @@ import streamlit as st
 import os
 import requests
 from urllib.parse import urlencode
-import re
-from PIL import Image
 
 # Importera Googles bibliotek
 from google.oauth2.credentials import Credentials
 from googleapiclient.discovery import build
+from google.auth.transport.requests import Request
 
 # Importera vår motor
 import pdf_motor
@@ -215,7 +214,10 @@ else:
                     if st.session_state.organize_mode: col_list[0].checkbox("", key=f"select_{item['id']}")
                     with col_list[-2]:
                         if item.get('type') == 'image' and item.get('thumbnail'): st.image(item['thumbnail'], width=100)
-                        elif item.get('type') == 'pdf': st.markdown("<p style='font-size: 48px;'>📑</p>", unsafe_allow_html=True)
+                        elif item.get('type') == 'pdf' and item.get('thumbnail'):
+                             st.image(item['thumbnail'], width=100)
+                        elif item.get('type') == 'pdf':
+                             st.markdown("<p style='font-size: 48px;'>📑</p>", unsafe_allow_html=True)
                         elif item.get('type') == 'text' and 'content' in item: st.info(item.get('content'))
                         elif item.get('type') == 'text': st.markdown("<p style='font-size: 48px;'>📄</p>", unsafe_allow_html=True)
                     with col_list[-1]:
