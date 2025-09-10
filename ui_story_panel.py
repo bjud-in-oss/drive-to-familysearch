@@ -127,3 +127,40 @@ def render_story_panel():
                                 st.success("PDF uppdelad!")
                                 reload_story_items()
             st.divider()
+def render_pdf_generation_view():
+    """
+    Visar en förloppsindikator under PDF-generering och sedan
+    nedladdningsknappar för de färdiga filerna.
+    """
+    st.markdown("### Skapar PDF-album...")
+    st.info("Detta kan ta en stund beroende på antalet bilder och deras storlek. Vänligen vänta.")
+    
+    progress_bar = st.progress(0, "Startar...")
+    status_text = st.empty()
+
+    def progress_callback(fraction, message):
+        """Uppdaterar progress bar och text från motorn."""
+        progress_bar.progress(fraction, message)
+        status_text.text(message)
+
+    try:
+        result = pdf_motor.generate_pdfs_from_story(
+            service=st.session_state.drive_service,
+            story_items=st.session_state.story_items,
+            settings=st.session_state.pdf_settings,
+            progress_callback=progress_callback
+        )
+        
+        if 'pdfs' in result and result['pdfs']:
+            st.session_state.generated_pdfs = result['pdfs']
+        else:
+            st.error("Något gick fel, inga PDF-filer skapades.")
+            st.session_state.generated_pdfs = []
+
+    except Exception as e:
+        st.error(f"Ett allvarligt fel inträffade under PDF-genereringen: {e}")
+        st.session_state.generated_pdfs = []
+
+    # Återställ flaggan och ladda om för att visa nedladdningsknapparna
+    st.session_state.run_pdf_generation = False
+    st.rerun()
