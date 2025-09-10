@@ -27,6 +27,46 @@ def render_story_panel():
     st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
     st.markdown("### Berättelsens flöde")
 
+    # --- Dialogruta för att skapa textfil ---
+    if st.session_state.get('show_text_modal', False):
+        with st.form("new_text_form"):
+            st.markdown("### Skapa ny textfil")
+            new_filename = st.text_input("Filnamn (använd t.ex. 'min_fil.h1.txt' för rubrik)", "ny_text.p.txt")
+            new_content = st.text_area("Innehåll", height=200)
+            
+            # Knappar i två kolumner
+            col1, col2 = st.columns(2)
+            
+            if col1.form_submit_button("Spara textfil på Google Drive", type="primary", use_container_width=True):
+                if not any(new_filename.lower().endswith(ext) for ext in pdf_motor.SUPPORTED_TEXT_EXTENSIONS):
+                    st.error(f"Filnamnet måste sluta med något av: {pdf_motor.SUPPORTED_TEXT_EXTENSIONS}")
+                else:
+                    with st.spinner(f"Sparar {new_filename}..."):
+                        result = pdf_motor.upload_new_text_file(
+                            st.session_state.drive_service,
+                            st.session_state.current_folder_id,
+                            new_filename,
+                            new_content
+                        )
+                        if 'error' in result:
+                            st.error(result['error'])
+                        else:
+                            insert_index = st.session_state.get('text_insert_index')
+                            if insert_index is not None:
+                                st.session_state.story_items.insert(insert_index, result['unit'])
+                            else: # Om index är None, lägg till sist
+                                st.session_state.story_items.append(result['unit'])
+                            
+                            pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
+                            st.success(f"'{new_filename}' har skapats och lagts till i din berättelse!")
+                            st.session_state.show_text_modal = False
+                            st.rerun()
+
+            if col2.form_submit_button("Avbryt", use_container_width=True):
+                st.session_state.show_text_modal = False
+                st.rerun()
+        st.divider()
+
     # Visa själva listan med objekt, iterera säkert
     for i in range(len(st.session_state.story_items) - 1, -1, -1):
         # Kontrollera om objektet fortfarande finns (kan ha tagits bort av "Dela upp")
