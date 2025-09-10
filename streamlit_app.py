@@ -58,6 +58,10 @@ def reload_story_items(show_spinner=True):
         result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
         if 'error' in result: st.error(result['error'])
         elif 'units' in result: st.session_state.story_items = result['units']
+    
+    # Rensa urval och text-infogningsläge
+    st.session_state.selected_indices = set()
+    st.session_state.show_text_inserter = False
     st.rerun()
 
 # --- Applikationens Flöde ---
@@ -70,11 +74,11 @@ def initialize_state():
         'drive_service': None, 'user_email': None, 'story_items': None, 'path_history': [], 
         'current_folder_id': None, 'current_folder_name': None, 'organize_mode': False, 
         'selected_indices': set(), 'clipboard': [], 'quick_sort_mode': False, 
-        'unsorted_items': [], 'show_text_inserter': False, 'insertion_index': 0,
-        'insertion_mode': 'efter'
+        'unsorted_items': [], 'show_text_inserter': False, 'insertion_index': 0
     }
     for key, value in defaults.items():
-        if key not in st.session_state: st.session_state[key] = value
+        if key not in st.session_state:
+            st.session_state[key] = value
 
 initialize_state()
 
@@ -87,13 +91,14 @@ if auth_code and st.session_state.drive_service is None:
             try:
                 user_info = st.session_state.drive_service.about().get(fields='user').execute()
                 st.session_state.user_email = user_info['user']['emailAddress']
-            except Exception: st.session_state.user_email = "Okänd"
+            except Exception:
+                st.session_state.user_email = "Okänd"
         st.query_params.clear()
         st.rerun()
 
 # --- Huvudlayout ---
 if st.session_state.drive_service is None:
-    # Användaren är INTE inloggad, visa inloggningssidan
+    # Användaren är INTE inloggad
     st.markdown("### Välkommen!")
     st.markdown("För att börja, anslut ditt Google Drive-konto.")
     
@@ -101,17 +106,17 @@ if st.session_state.drive_service is None:
     if auth_url:
         st.link_button("Logga in med Google", auth_url)
     else:
-        st.error("Fel: Appen saknar konfiguration. Kontrollera GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET och APP_URL i dina 'Secrets'.")
+        st.error("Fel: Appen saknar konfiguration. GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET och APP_URL måste ställas in i 'Secrets'.")
 
 else:
-    # Användaren ÄR inloggad! Sätt upp huvudlayouten med en sidopanel och ett huvudfönster.
+    # Användaren ÄR inloggad!
     col_main, col_sidebar = st.columns([3, 1])
 
-with col_sidebar:
+    with col_sidebar:
         st.markdown(f"**Ansluten som:**\n{st.session_state.user_email}")
         st.divider()
         
-        # FILBLÄDDRARE (visas inte under vissa speciallägen)
+        # FILBLÄDDRARE (om inte i snabbsortering eller text-infogning)
         if not st.session_state.quick_sort_mode and not st.session_state.show_text_inserter:
             st.markdown("### Välj Källmapp")
             if st.session_state.current_folder_id is None:
@@ -130,18 +135,15 @@ with col_sidebar:
                 path_parts = [name for id, name in st.session_state.path_history] + [st.session_state.current_folder_name]
                 st.write(f"**Plats:** `{' / '.join(path_parts)}`")
                 c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("⬅️ Byt enhet", use_container_width=True):
-                        initialize_state() # Total återställning
-                        st.rerun()
-                with c2:
-                    if st.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
-                        prev_id, prev_name = st.session_state.path_history.pop()
-                        st.session_state.current_folder_id = prev_id
-                        st.session_state.current_folder_name = prev_name
-                        st.session_state.story_items = None
-                        st.rerun()
-
+                if c1.button("⬅️ Byt enhet", use_container_width=True):
+                    initialize_state()
+                    st.rerun()
+                if c2.button("⬆️ Gå upp", use_container_width=True, disabled=not st.session_state.path_history):
+                    prev_id, prev_name = st.session_state.path_history.pop()
+                    st.session_state.current_folder_id = prev_id
+                    st.session_state.current_folder_name = prev_name
+                    st.session_state.story_items = None
+                    st.rerun()
                 if st.button("✅ Läs in denna mapp", type="primary", use_container_width=True):
                     reload_story_items()
 
@@ -164,57 +166,30 @@ with col_sidebar:
             st.markdown("### Verktyg")
             st.info("Dina originalfiler raderas eller ändras aldrig.", icon="ℹ️")
 
-            # INFOGA TEXT
-            st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
-            if len(st.session_state.selected_indices) == 1:
-                st.markdown("**Infoga text:**")
-                idx = list(st.session_state.selected_indices)[0]
-                t_cols = st.columns(2)
-                if t_cols[0].button("Före", use_container_width=True, key="insert_before"):
-                    st.session_state.show_text_inserter = True
-                    st.session_state.insertion_index = idx
-                    st.rerun()
-                if t_cols[1].button("Efter", use_container_width=True, key="insert_after"):
-                    st.session_state.show_text_inserter = True
-                    st.session_state.insertion_index = idx + 1
-                    st.rerun()
-            
-            if st.session_state.show_text_inserter:
-                with st.form("new_text_form"):
-                    st.markdown("#### Skapa ny text")
-                    if st.session_state.insertion_index <= len(st.session_state.story_items):
-                         st.caption(f"Infogas vid position {st.session_state.insertion_index + 1}")
-                    
+            with st.expander("➕ Infoga ny text..."):
+                with st.form("new_text_form", clear_on_submit=True):
                     new_text_name = st.text_input("Filnamn (utan .txt)")
                     new_text_style = st.selectbox("Textstil", ['p', 'h1', 'h2'])
                     new_text_content = st.text_area("Innehåll")
-                    
-                    submitted = st.form_submit_button("✅ Spara och infoga")
+                    submitted = st.form_submit_button("Spara ny textfil")
                     if submitted:
                         if new_text_name and new_text_content:
-                            clean_name = re.sub(r'[^a-zA-Z0-9_-]', '', new_text_name.replace(' ', '_'))
-                            final_filename = f"{st.session_state.insertion_index:03d}a_{clean_name}.{new_text_style}.txt"
-                            
+                            prefix = f"{len(st.session_state.story_items):03d}"
+                            final_filename = f"{prefix}_{new_text_name}.{new_text_style}.txt"
                             with st.spinner("Sparar textfil..."):
                                result = pdf_motor.upload_new_text_file(st.session_state.drive_service, st.session_state.current_folder_id, final_filename, new_text_content)
-                               if 'error' in result:
-                                   st.error(result['error'])
+                               if 'error' in result: st.error(result['error'])
                                else:
-                                   st.session_state.show_text_inserter = False
-                                   st.success("Text infogad!")
+                                   st.success("Textfil sparad!")
                                    reload_story_items(show_spinner=False)
                         else:
-                            st.warning("Fyll i både filnamn och innehåll.")
-                if st.button("Avbryt"):
-                    st.session_state.show_text_inserter = False
-                    st.rerun()
-            
+                            st.warning("Filnamn och innehåll får inte vara tomt.")
+
             st.divider()
             
-            # ÖVRIGA VERKTYG
             if st.button("Starta Snabbsortering 🔢", disabled=st.session_state.quick_sort_mode, use_container_width=True):
                 st.session_state.quick_sort_mode = True
-                with st.spinner("Förbereder..."):
+                with st.spinner("Förbereder snabbsortering..."):
                     all_files_result = pdf_motor.get_content_units_from_folder(st.session_state.drive_service, st.session_state.current_folder_id)
                     if 'units' in all_files_result:
                         all_items_map = {item['filename']: item for item in all_files_result['units']}
@@ -223,6 +198,7 @@ with col_sidebar:
                         st.session_state.unsorted_items = sorted(unsorted, key=lambda x: x['filename'].lower())
                 st.rerun()
 
+            st.session_state.selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
             st.info(f"{len(st.session_state.selected_indices)} objekt valda.")
             
             tool_cols = st.columns(2)
@@ -232,9 +208,7 @@ with col_sidebar:
                 pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                 st.rerun()
             if tool_cols[1].button("Klistra in 📥", disabled=not st.session_state.clipboard, use_container_width=True):
-                # Klistra in efter markerat objekt om ett är valt, annars överst
-                insert_pos = list(st.session_state.selected_indices)[0] + 1 if len(st.session_state.selected_indices) == 1 else 0
-                st.session_state.story_items[insert_pos:insert_pos] = st.session_state.clipboard
+                st.session_state.story_items = st.session_state.clipboard + st.session_state.story_items
                 st.session_state.clipboard = []
                 pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                 st.rerun()
@@ -245,14 +219,14 @@ with col_sidebar:
                 for i in sorted(list(st.session_state.selected_indices), reverse=True): del st.session_state.story_items[i]
                 pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                 st.rerun()
-
-# Inställningar & Publicering
+                
+        # Inställningar & Publicering
         if st.session_state.story_items is not None:
             st.divider()
             st.markdown("### Inställningar & Publicering")
 
-            settings_quality = st.slider("Bildkvalitet (lägre = mindre fil)", 10, 95, 85, key="quality_slider")
-            settings_max_size = st.number_input("Max filstorlek per PDF (MB)", min_value=1, value=15, key="max_size_input")
+            settings_quality = st.slider("Bildkvalitet (lägre = mindre filstorlek)", 10, 95, 85, key="quality_slider")
+            settings_max_size = st.number_input("Max filstorlek per PDF (MB)", min_value=1, max_value=100, value=15, key="max_size_input")
             settings_margin = st.number_input("Marginal runt innehåll (mm)", min_value=0.0, value=0.0, step=1.0, key="margin_input")
             
             if st.button("Skapa PDF-album 🚀", type="primary", use_container_width=True):
@@ -262,11 +236,7 @@ with col_sidebar:
                 def update_progress(fraction, text):
                     progress_bar_area.progress(fraction, text)
                 
-                settings = {
-                    'quality': settings_quality,
-                    'max_size_mb': settings_max_size,
-                    'margin_mm': settings_margin
-                }
+                settings = {'quality': settings_quality, 'max_size_mb': settings_max_size, 'margin_mm': settings_margin}
                 
                 with st.spinner("Genererar PDF-album... Detta kan ta flera minuter."):
                     result = pdf_motor.generate_pdfs_from_story(
@@ -295,13 +265,12 @@ with col_sidebar:
                         key=f"download_{i}"
                     )
 
-with col_main:
-        # --- SNABBSORTERINGS-LÄGE ---
+    with col_main:
+        # SNABBSORTERINGS-LÄGE
         if st.session_state.story_items is not None and st.session_state.quick_sort_mode:
             st.warning("SNABBSORTERINGS-LÄGE AKTIVT")
             if st.button("✅ Avsluta Snabbsortering och spara"):
-                if st.session_state.unsorted_items:
-                    st.session_state.story_items.extend(st.session_state.unsorted_items)
+                if st.session_state.unsorted_items: st.session_state.story_items.extend(st.session_state.unsorted_items)
                 pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
                 st.session_state.quick_sort_mode = False
                 st.rerun()
@@ -318,7 +287,7 @@ with col_main:
             with qs_col2:
                 st.markdown("#### Din Berättelse (i ordning)")
                 with st.container(height=600):
-                    if not st.session_state.story_items: st.info("Börja genom att klicka på filer i vänstra listan.")
+                    if not st.session_state.story_items: st.info("Börja genom att klicka.")
                     for item in st.session_state.story_items:
                         with st.container():
                             i_col1, i_col2 = st.columns([1,5])
@@ -337,7 +306,7 @@ with col_main:
                             with i_col2:
                                 st.write(item.get('filename', 'Okänt filnamn'))
         
-        # --- NORMAL VISUELL LISTA / ORGANISERINGS-LÄGE ---
+        # NORMAL VISUELL LISTA / ORGANISERINGS-LÄGE
         elif st.session_state.story_items is not None:
             st.toggle("Ändra ordning & innehåll (Organisera-läge)", key="organize_mode")
             st.divider()
@@ -374,8 +343,7 @@ with col_main:
                                        elif 'new_files' in result:
                                            st.session_state.story_items = st.session_state.story_items[:i] + result['new_files'] + st.session_state.story_items[i+1:]
                                            pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
-                                           st.success("PDF uppdelad!")
-                                           reload_story_items(show_spinner=False)
+                                           st.success("PDF uppdelad!"); reload_story_items(show_spinner=False)
                     st.divider()
         else:
-            st.info("⬅️ Använd filbläddraren i sidopanelen för att välja en mapp och klicka på 'Läs in denna mapp'.")
+            st.info("⬅️ Använd filbläddraren för att börja.")
