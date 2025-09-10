@@ -4,8 +4,10 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
 import json
+
+# Importera bibliotek för PDF-hantering
 from pypdf import PdfReader, PdfWriter
-import fitz  # PyMuPDF
+from fpdf import FPDF
 from PIL import Image
 
 # Konfiguration
@@ -111,13 +113,26 @@ def get_content_units_from_folder(service, folder_id):
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
 
 def upload_new_text_file(service, folder_id, filename, content):
+    """Laddar upp en ny textfil och returnerar dess data."""
     try:
         content_bytes = content.encode('utf-8')
         fh = io.BytesIO(content_bytes)
         media_body = MediaIoBaseUpload(fh, mimetype='text/plain', resumable=True)
         file_metadata = {'name': filename, 'parents': [folder_id]}
-        service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id').execute()
-        return {'success': True}
+        # Be API:et att returnera information om den nya filen
+        file = service.files().create(
+            body=file_metadata, 
+            media_body=media_body, 
+            supportsAllDrives=True, 
+            fields='id, name, mimeType, thumbnailLink'
+        ).execute()
+        
+        # Konvertera till vårt interna format
+        new_unit = {
+            'filename': file.get('name'), 'id': file.get('id'), 'type': 'text',
+            'thumbnail': file.get('thumbnailLink'), 'content': content
+        }
+        return {'success': True, 'unit': new_unit}
     except HttpError as e:
         return {'error': f"Kunde inte ladda upp textfil: {e}"}
 
