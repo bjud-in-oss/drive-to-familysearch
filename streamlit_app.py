@@ -45,18 +45,16 @@ if st.session_state.drive_service is None:
     # Användaren är INTE inloggad -> Visa inloggningssidan
     render_login_page()
 else:
-    # Användaren ÄR inloggad -> Rita upp huvudgränssnittet
-    col_sidebar, col_main = st.columns([1, 2])
-
-    with col_sidebar:
-        # Sidopanelen är alltid densamma
+    # Användaren ÄR inloggad -> Rita upp huvudgränssnittet med st.sidebar
+    
+    # Använd st.sidebar för en fast, oberoende sidopanel
+    with st.sidebar:
         ui_sidebar.render_sidebar()
 
-    with col_main:
-        # Huvudpanelen ändras beroende på läge
-        if st.session_state.get('quick_sort_mode', False):
-            ui_quicksort_panel.render_quicksort_panel()
-        elif st.session_state.story_items is not None:
-            ui_story_panel.render_story_panel()
-        else:
-            st.info("⬅️ Använd filbläddraren för att börja.")
+    # Huvudinnehållet ritas upp direkt på huvudsidan
+    if st.session_state.get('quick_sort_mode', False):
+        ui_quicksort_panel.render_quicksort_panel()
+    elif st.session_state.story_items is not None:
+        ui_story_panel.render_story_panel()
+    else:
+        st.info("⬅️ Använd filbläddraren för att börja.")
