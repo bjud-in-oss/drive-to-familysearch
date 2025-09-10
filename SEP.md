@@ -1,4 +1,4 @@
-** Fas-plan 1: Grundläggande Applikation & Google-anslutning **
+## Fas-plan 1: Grundläggande Applikation & Google-anslutning ##
 Syfte: Att etablera en stabil, molnbaserad miljö för applikationen och implementera den centrala, säkra anslutningen till en användares Google Drive. Denna fas handlar om att bygga den fundamentala bron mellan programmet och användarens data, samt att lösa alla initiala plattformsproblem.
 
 Funktionella Krav:
@@ -23,7 +23,7 @@ Autentisering: En specialbyggd OAuth 2.0-process som använder requests-bibliote
 
 Gränssnitt: En st.link_button för inloggning. Logiken hanterar ?code=-parametern i URL:en när användaren skickas tillbaka från Google. Programmets tillstånd (om man är inloggad eller ej) hanteras med st.session_state.
 
-** Fas-plan 2: Filbläddrare och Visuell Lista **
+## Fas-plan 2: Filbläddrare och Visuell Lista ##
 Syfte: Att bygga det primära gränssnittet för att interagera med Google Drive. Detta innefattar en grafisk filbläddrare för att enkelt kunna navigera i mappstrukturen, samt att omvandla fillistan från text till en rik, visuell representation med miniatyrbilder.
 
 Funktionella Krav:
@@ -46,7 +46,7 @@ Motor: pdf_motor.py utökas med funktioner för att hämta listor på tillgängl
 
 Visualisering: st.image används för att visa miniatyrbilder direkt från den thumbnailLink som Google Drive API:et tillhandahåller. st.markdown används för ikoner.
 
-** Fas-plan 3: Sortering & Organisering **
+## Fas-plan 3: Sortering & Organisering ##
 Syfte: Att ge användaren fullständig kreativ kontroll över berättelsens narrativa flöde genom att implementera en komplett uppsättning verktyg för att arrangera, kuratera och omorganisera objekten i den visuella listan.
 
 Funktionella Krav:
@@ -73,7 +73,7 @@ Motor: pdf_motor.py utökas med funktioner för att spara (save_story_order) och
 
 Interaktivitet: Alla åtgärder manipulerar st.session_state.story_items-listan och anropar st.rerun() för att omedelbart uppdatera gränssnittet.
 
-** Fas-plan 4: Skapandet av Innehåll och Förbättrad Visuell Lista **
+## Fas-plan 4: Skapandet av Innehåll och Förbättrad Visuell Lista ##
 Syfte: Att omvandla applikationen från en passiv organisatör till ett aktivt skapande-verktyg. Användaren ska kunna lägga till nytt textinnehåll och dekonstruera PDF-dokument. Samtidigt ska den visuella listan förbättras för att ge en mer exakt förhandsvisning av allt innehåll, inklusive PDF-sidor och text.
 
 Funktionella Krav:
@@ -92,7 +92,7 @@ Gränssnitt: Huvudlistan i streamlit_app.py modifieras för att anropa pdf_motor
 
 Motor: pdf_motor.py utökas med funktionerna render_pdf_page_as_image (med PyMuPDF), upload_new_text_file, och split_pdf_and_upload (med pypdf).
 
-** Fas-plan 5: PDF-generering **
+## Fas-plan 5: PDF-generering ##
 Syfte: Att implementera applikationens kärnfunktion: att omvandla den kuraterade och sorterade berättelselistan till ett eller flera färdiga, nedladdningsbara PDF-dokument.
 
 Funktionella Krav:
@@ -111,7 +111,7 @@ Gränssnitt: En ny sektion, "Inställningar & Publicering", läggs till i sidopa
 
 Motor: pdf_motor.py utökas med den stora huvudfunktionen generate_pdfs_from_story, som innehåller den anpassade logiken från ditt ursprungliga skript för att bygga PDF-sidor med fpdf2 och Pillow, inklusive den iterativa storlekskontrollen.
 
-** Fas 6: Stil-editor & Inställningar **
+## Fas 6: Stil-editor & Inställningar ##
 Syfte: Att ge dig full kreativ kontroll över textens utseende i de slutgiltiga PDF-filerna. Istället för att ha fasta stilar för rubriker och text, ska du kunna definiera dem själv.
 
 Funktionella Krav:
@@ -134,7 +134,7 @@ Vi skapar nya funktioner i pdf_motor.py för att läsa och skriva styles.json-fi
 
 PDF-genereringsmotorn kommer att anpassas för att läsa och använda dessa anpassade stilar.
 
-** Fas 7: Städ-guiden & Slutförande **
+## Fas 7: Städ-guiden & Slutförande ##
 Syfte: Att erbjuda ett enkelt och säkert sätt att städa upp efter ett avslutat projekt, för att undvika digital oreda.
 
 Funktionella Krav:
