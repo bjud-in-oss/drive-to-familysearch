@@ -4,57 +4,18 @@ from googleapiclient.errors import HttpError
 from googleapiclient.http import MediaIoBaseUpload, MediaIoBaseDownload
 import io
 import json
-import re
 from pypdf import PdfReader, PdfWriter
-from fpdf import FPDF, XPos, YPos
-from PIL import Image
 import fitz  # PyMuPDF
+from PIL import Image
 
 # Konfiguration
+PROJECT_FILE_NAME = '.storyproject.json'
 SUPPORTED_IMAGE_EXTENSIONS = ('.jpg', '.jpeg', '.png', '.gif', '.bmp', '.webp')
 SUPPORTED_TEXT_EXTENSIONS = ('.txt',)
 SUPPORTED_PDF_EXTENSIONS = ('.pdf',)
 SUPPORTED_EXTENSIONS = SUPPORTED_IMAGE_EXTENSIONS + SUPPORTED_TEXT_EXTENSIONS + SUPPORTED_PDF_EXTENSIONS
-PROJECT_FILE_NAME = '.storyproject.json'
-MM_TO_PT = 2.83465
-STYLES = {
-    'p': {'font': 'Helvetica', 'style': '', 'size': 11, 'spacing': 6, 'align': 'J'},
-    'h1': {'font': 'Helvetica', 'style': 'B', 'size': 18, 'spacing': 8, 'align': 'L'},
-    'h2': {'font': 'Helvetica', 'style': 'B', 'size': 14, 'spacing': 7, 'align': 'L'},
-}
 
-# --- Klasser och Hjälpfunktioner ---
-
-class PreciseFPDF(FPDF):
-    """En anpassad FPDF-klass för bättre textkontroll."""
-    def add_styled_text(self, text, style, content_width_mm):
-        self.set_font(style.get('font', 'Helvetica'), style.get('style', ''), style.get('size', 11))
-        self.multi_cell(content_width_mm, style.get('spacing', 6), text, align=style.get('align', 'J'))
-
-def parse_style_from_filename(filename):
-    """Hämtar stil-taggen från ett filnamn."""
-    stem = Path(filename).stem.lower()
-    parts = stem.split('.')
-    if len(parts) > 1 and Path(filename).suffix.lower() == '.txt':
-        return parts[-1]
-    return 'p'
-
-def download_file_content(service, file_id):
-    """Hämtar det fullständiga innehållet av en fil som bytes."""
-    try:
-        request = service.files().get_media(fileId=file_id)
-        fh = io.BytesIO()
-        downloader = MediaIoBaseDownload(fh, request)
-        done = False
-        while not done:
-            status, done = downloader.next_chunk()
-        fh.seek(0)
-        return fh
-    except HttpError as e:
-        print(f"Kunde inte ladda ner fil {file_id}: {e}")
-        return None
-
-# --- Funktioner för att hantera Google Drive-objekt ---
+# --- Google Drive API-funktioner ---
 
 def get_available_drives(service):
     drives = [{'id': 'root', 'name': 'Min enhet'}]
@@ -62,14 +23,16 @@ def get_available_drives(service):
         response = service.drives().list().execute()
         drives.extend(response.get('drives', []))
         return drives
-    except HttpError as e: return {'error': f"Kunde inte hämta enheter: {e}"}
+    except HttpError as e:
+        return {'error': f"Kunde inte hämta lista på enheter: {e}"}
 
 def list_folders(service, folder_id='root'):
     try:
         query = f"'{folder_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
         results = service.files().list(q=query, supportsAllDrives=True, includeItemsFromAllDrives=True, spaces='drive', fields='files(id, name)').execute()
         return results.get('files', [])
-    except HttpError as e: return {'error': f"Kunde inte hämta mappar: {e}"}
+    except HttpError as e:
+        return {'error': f"Kunde inte hämta mappar: {e}"}
 
 def load_story_order(service, folder_id):
     try:
@@ -81,10 +44,12 @@ def load_story_order(service, folder_id):
             fh = io.BytesIO()
             downloader = MediaIoBaseDownload(fh, request)
             done = False
-            while done is False: status, done = downloader.next_chunk()
-            project_data = json.loads(fh.getvalue())
+            while not done:
+                status, done = downloader.next_chunk()
+            project_data = json.loads(fh.getvalue().decode('utf-8'))
             return project_data.get('order', [])
-    except HttpError as e: print(f"Kunde inte ladda projektfil: {e}")
+    except HttpError as e:
+        print(f"Kunde inte ladda projektfil: {e}")
     return None
 
 def save_story_order(service, folder_id, story_items):
@@ -110,6 +75,7 @@ def get_content_units_from_folder(service, folder_id):
         query = f"'{folder_id}' in parents and trashed = false"
         results = service.files().list(q=query, corpora="allDrives", includeItemsFromAllDrives=True, supportsAllDrives=True, pageSize=1000, fields="files(id, name, mimeType, thumbnailLink)").execute()
         items = results.get('files', [])
+        
         unit_map = {item.get('name'): item for item in items if item.get('name') != PROJECT_FILE_NAME}
         
         saved_order = load_story_order(service, folder_id)
@@ -142,11 +108,9 @@ def get_content_units_from_folder(service, folder_id):
                 elif ext in SUPPORTED_PDF_EXTENSIONS: unit['type'] = 'pdf'
                 story_units.append(unit)
         return {'units': story_units}
-            
     except HttpError as e: return {'error': f"Kunde inte hämta filer: {e}"}
 
 def upload_new_text_file(service, folder_id, filename, content):
-    """Laddar upp en ny textfil till Google Drive."""
     try:
         content_bytes = content.encode('utf-8')
         fh = io.BytesIO(content_bytes)
@@ -158,7 +122,6 @@ def upload_new_text_file(service, folder_id, filename, content):
         return {'error': f"Kunde inte ladda upp textfil: {e}"}
 
 def split_pdf_and_upload(service, file_id, original_filename, folder_id):
-    """Hämtar, delar upp och laddar upp sidorna i en PDF."""
     try:
         request = service.files().get_media(fileId=file_id)
         fh = io.BytesIO()
@@ -183,7 +146,12 @@ def split_pdf_and_upload(service, file_id, original_filename, folder_id):
             new_filename = f"{base_name}_sida_{i+1:03}.pdf"
             media_body = MediaIoBaseUpload(page_buffer, mimetype='application/pdf', resumable=True)
             file_metadata = {'name': new_filename, 'parents': [folder_id]}
-            file = service.files().create(body=file_metadata, media_body=media_body, supportsAllDrives=True, fields='id, name, mimeType, thumbnailLink').execute()
+            file = service.files().create(
+                body=file_metadata,
+                media_body=media_body,
+                supportsAllDrives=True,
+                fields='id, name, mimeType, thumbnailLink'
+            ).execute()
             
             new_unit = {
                 'filename': file.get('name'), 'id': file.get('id'), 'type': 'pdf',
@@ -194,114 +162,3 @@ def split_pdf_and_upload(service, file_id, original_filename, folder_id):
         return {'new_files': newly_created_files}
     except Exception as e:
         return {'error': f"Kunde inte dela upp PDF: {e}"}
-
-def generate_pdfs_from_story(service, story_items, settings, progress_callback):
-    """Huvudfunktionen som bygger PDF-albumen."""
-    doc_width_mm = 210
-    margin_mm = 10
-    content_width_mm = doc_width_mm - (2 * margin_mm)
-    max_size_bytes = settings.get('max_size_mb', 15) * 1024 * 1024
-    quality = settings.get('quality', 85)
-
-    generated_pdfs = []
-    current_pdf_writer = PdfWriter()
-    items_in_current_pdf = 0
-    total_items = len(story_items)
-
-    for i, item in enumerate(story_items):
-        progress_callback(i / total_items, f"Bearbetar {item['filename']}...")
-        content_buffer = download_file_content(service, item['id'])
-        if not content_buffer: continue
-
-        page_writer = PdfWriter()
-        
-        try:
-            if item['type'] == 'image':
-                with Image.open(content_buffer) as img:
-                    img_w, img_h = img.size
-                    if img_w == 0: continue
-                    aspect_ratio = img_h / img_w
-                    img_height_mm = content_width_mm * aspect_ratio
-                    page_height_mm = img_height_mm + (2 * margin_mm)
-                    
-                    temp_page_pdf = FPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
-                    temp_page_pdf.add_page()
-                    img_byte_arr = io.BytesIO()
-                    img.convert('RGB').save(img_byte_arr, format='JPEG', quality=quality)
-                    temp_page_pdf.image(img_byte_arr, x=margin_mm, y=margin_mm, w=content_width_mm)
-                    
-                    with io.BytesIO(temp_page_pdf.output()) as f:
-                        page_writer.add_page(PdfReader(f).pages[0])
-
-            elif item['type'] == 'text':
-                text_content = content_buffer.read().decode('utf-8')
-                style = STYLES.get(parse_style_from_filename(item['filename']), STYLES['p'])
-                
-                temp_calc_pdf = FPDF('P', 'mm', 'A4'); temp_calc_pdf.add_page()
-                temp_calc_pdf.set_font(style.get('font'), style.get('style'), style.get('size'))
-                lines = temp_calc_pdf.multi_cell(w=content_width_mm, h=style.get('spacing'), text=text_content, dry_run=True, output='LINES')
-                text_height_mm = len(lines) * style.get('spacing', 6)
-                page_height_mm = text_height_mm + (2 * margin_mm) + 5 # Extra marginal
-
-                temp_page_pdf = PreciseFPDF(orientation='P', unit='mm', format=(doc_width_mm, page_height_mm))
-                temp_page_pdf.add_page()
-                temp_page_pdf.set_xy(margin_mm, margin_mm)
-                temp_page_pdf.add_styled_text(text_content, style, content_width_mm)
-                
-                with io.BytesIO(temp_page_pdf.output()) as f:
-                    page_writer.add_page(PdfReader(f).pages[0])
-            
-            if len(page_writer.pages) > 0:
-                test_writer = PdfWriter()
-                for page in current_pdf_writer.pages: test_writer.add_page(page)
-                test_writer.add_page(page_writer.pages[0])
-                
-                with io.BytesIO() as temp_buffer:
-                    test_writer.write(temp_buffer)
-                    current_size = temp_buffer.tell()
-
-                if current_size > max_size_bytes and items_in_current_pdf > 0:
-                    final_pdf_buffer = io.BytesIO()
-                    current_pdf_writer.write(final_pdf_buffer)
-                    final_pdf_buffer.seek(0)
-                    generated_pdfs.append(final_pdf_buffer)
-                    
-                    current_pdf_writer = page_writer
-                    items_in_current_pdf = 1
-                else:
-                    current_pdf_writer.add_page(page_writer.pages[0])
-                    items_in_current_pdf += 1
-        except Exception as e:
-            print(f"Kunde inte bearbeta {item['filename']}: {e}")
-
-    if items_in_current_pdf > 0:
-        final_pdf_buffer = io.BytesIO()
-        current_pdf_writer.write(final_pdf_buffer)
-        final_pdf_buffer.seek(0)
-        generated_pdfs.append(final_pdf_buffer)
-        
-    progress_callback(1.0, f"Klar! {len(generated_pdfs)} PDF-filer skapade.")
-    return {'pdfs': generated_pdfs}
-
-def render_pdf_page_as_image(service, file_id, page_num):
-    """Hämtar en PDF och renderar en specifik sida som en bild."""
-    try:
-        pdf_buffer = download_file_content(service, file_id)
-        if not pdf_buffer:
-            raise FileNotFoundError("Kunde inte ladda ner PDF-filen.")
-
-        doc = fitz.open(stream=pdf_buffer, filetype="pdf")
-        
-        page_count = len(doc)
-        if page_num < 0 or page_num >= page_count:
-            page_num = 0
-
-        page = doc.load_page(page_num)
-        pix = page.get_pixmap(dpi=150)
-        img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
-        
-        doc.close()
-        return {'image': img, 'page_count': page_count}
-        
-    except Exception as e:
-        return {'error': f"Kunde inte rendera PDF-sida: {e}"}
