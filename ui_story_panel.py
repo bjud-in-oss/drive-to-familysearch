@@ -58,7 +58,7 @@ def render_story_panel():
                             st.session_state[cache_key] = render_result.get('image', "ERROR")
                     
                     if st.session_state.get(cache_key) != "ERROR":
-                        st.image(st.session_state[cache_key], use_column_width=True, caption="Sida 1")
+                        st.image(st.session_state[cache_key], use_container_width=True, caption="Sida 1")
                     else:
                         st.markdown("<p style='font-size: 48px;'>📑</p>", unsafe_allow_html=True)
                 elif item.get('type') == 'text' and 'content' in item:
