@@ -1,64 +1,54 @@
 import streamlit as st
 
-# Importera våra egna moduler
+# Importera våra egna, välorganiserade moduler
 import google_auth
-import ui_renderer
-import pdf_motor
+import state_manager
+import ui_sidebar
+import ui_main_panel
 
-def initialize_state():
-    """Initialiserar alla variabler vi behöver i session state på ett säkert sätt."""
-    defaults = {
-        'drive_service': None,
-        'user_email': None,
-        'story_items': None,
-        'path_history': [],
-        'current_folder_id': None,
-        'current_folder_name': None,
-        'organize_mode': False,
-        'clipboard': [],
-        'quick_sort_mode': False,
-        'unsorted_items': [],
-        'show_text_modal': False,
-        'text_insert_index': None
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
+def render_login_page():
+    """Visar den enkla inloggningssidan."""
+    st.markdown("### Välkommen!")
+    st.markdown("För att börja, anslut ditt Google Drive-konto.")
+    
+    auth_url = google_auth.get_auth_url()
+    if auth_url:
+        st.link_button("Logga in med Google", auth_url)
+    else:
+        st.error("Fel: Appen saknar konfiguration. GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET och APP_URL måste ställas in i 'Secrets'.")
 
 # --- Applikationens Huvudflöde ---
 st.set_page_config(layout="wide")
 st.title("Berättelsebyggaren")
 
-# Körs alltid först för att säkerställa att session state är redo
-initialize_state()
+# 1. Säkerställ att session state är initialiserat
+state_manager.initialize_state()
 
-# STEG 1: Hantera eventuell callback från Google
+# 2. Hantera eventuell callback från Google efter inloggning
 auth_code = st.query_params.get('code')
 if auth_code and st.session_state.drive_service is None:
     with st.spinner("Verifierar inloggning..."):
         st.session_state.drive_service = google_auth.exchange_code_for_service(auth_code)
         if st.session_state.drive_service:
             try:
-                # Försök hämta användarens e-post för att visa vem som är inloggad
                 user_info = st.session_state.drive_service.about().get(fields='user').execute()
                 st.session_state.user_email = user_info['user']['emailAddress']
             except Exception:
                 st.session_state.user_email = "Okänd"
-        # Rensa bort koden från URL:en och ladda om sidan
+        
         st.query_params.clear()
         st.rerun()
 
-# STEG 2: Bestäm vilken vy som ska visas baserat på inloggningsstatus
+# 3. Bestäm vilken vy som ska visas
 if st.session_state.drive_service is None:
-    # ANVÄNDAREN ÄR INTE INLOGGAD
-    auth_url = google_auth.get_auth_url()
-    ui_renderer.render_login_page(auth_url)
+    # Användaren är INTE inloggad -> Visa inloggningssidan
+    render_login_page()
 else:
-    # ANVÄNDAREN ÄR INLOGGAD
-    col_sidebar, col_main = st.columns([1, 2]) # Justerat förhållandet för bättre layout
+    # Användaren ÄR inloggad -> Rita upp huvudgränssnittet
+    col_sidebar, col_main = st.columns([1, 2])
 
     with col_sidebar:
-        ui_renderer.render_sidebar()
+        ui_sidebar.render_sidebar()
 
     with col_main:
-        ui_renderer.render_main_content()
+        ui_main_panel.render_main_content()
