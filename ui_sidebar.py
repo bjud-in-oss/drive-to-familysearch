@@ -55,10 +55,24 @@ def render_sidebar():
                         st.session_state.story_items = None
                         st.rerun()
 
-    # --- VERKTYG FÖR ORGANISERING ---
+# --- VERKTYG FÖR ORGANISERING ---
     if st.session_state.story_items is not None and st.session_state.organize_mode:
         st.divider()
         st.markdown("### Verktyg")
+
+        # --- Knappar för text-infogning ---
+        selected_indices = [i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")]
+        
+        if len(selected_indices) == 1:
+            idx = selected_indices[0]
+            st.button("➕ Infoga text FÖRE markerad", on_click=lambda: st.session_state.update(show_text_modal=True, text_insert_index=idx), use_container_width=True)
+            st.button("➕ Infoga text EFTER markerad", on_click=lambda: st.session_state.update(show_text_modal=True, text_insert_index=idx + 1), use_container_width=True)
+        else:
+            st.button("➕ Lägg till text sist", on_click=lambda: st.session_state.update(show_text_modal=True, text_insert_index=None), use_container_width=True)
+        
+        st.divider()
+        
+        # --- Övriga verktyg ---
         st.info("Dina originalfiler raderas eller ändras aldrig.", icon="ℹ️")
 
         if st.button("Starta Snabbsortering 🔢", disabled=st.session_state.quick_sort_mode, use_container_width=True):
@@ -72,18 +86,18 @@ def render_sidebar():
                     st.session_state.unsorted_items = sorted(unsorted, key=lambda x: x['filename'].lower())
             st.rerun()
 
-        selected_indices = {i for i, item in enumerate(st.session_state.story_items) if st.session_state.get(f"select_{item['id']}")}
         st.info(f"{len(selected_indices)} objekt valda.")
 
         tool_cols = st.columns(2)
         if tool_cols[0].button("Klipp ut 📤", disabled=not selected_indices, use_container_width=True):
-            st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(list(selected_indices))]
-            for i in sorted(list(selected_indices), reverse=True):
+            st.session_state.clipboard = [st.session_state.story_items[i] for i in sorted(selected_indices, reverse=False)]
+            for i in sorted(selected_indices, reverse=True):
                 del st.session_state.story_items[i]
             pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
             st.rerun()
         if tool_cols[1].button("Klistra in 📥", disabled=not st.session_state.clipboard, use_container_width=True):
-            st.session_state.story_items = st.session_state.clipboard + st.session_state.story_items
+            insert_pos = selected_indices[0] + 1 if len(selected_indices) == 1 else 0
+            st.session_state.story_items = st.session_state.story_items[:insert_pos] + st.session_state.clipboard + st.session_state.story_items[insert_pos:]
             st.session_state.clipboard = []
             pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
             st.rerun()
@@ -92,7 +106,7 @@ def render_sidebar():
             st.success(f"{len(st.session_state.clipboard)} i urklipp.")
 
         if st.button("Ta bort 🗑️", type="primary", disabled=not selected_indices, use_container_width=True):
-            for i in sorted(list(selected_indices), reverse=True):
+            for i in sorted(selected_indices, reverse=True):
                 del st.session_state.story_items[i]
             pdf_motor.save_story_order(st.session_state.drive_service, st.session_state.current_folder_id, st.session_state.story_items)
             st.rerun()
