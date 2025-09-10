@@ -160,3 +160,95 @@ Guiden implementeras som en st.dialog.
 Vi använder Pythons inbyggda bibliotek (shutil, zipfile) för att hantera arkiveringen.
 
 Google Drive API-anrop kommer att användas för att hantera raderingen av mappen på ett säkert sätt.
+
+
+
+## Tilläggs-plan A: Arkitekturellt vägval - Från Lokal App till Molnbaserad Tjänst ##
+Syfte: Att radikalt förenkla arbetsflödet för slutanvändaren ("Sandra"), som primärt arbetar i Google Drive. Målet var att eliminera de tunga och krångliga stegen att ladda ner källmaterial till en lokal dator och sedan ladda upp de färdiga resultaten.
+
+Krav: Applikationen måste kunna köras utan lokal installation av Python eller bibliotek. Den måste kunna interagera direkt med filer och mappar på användarens Google Drive. Den ska vara gratis att använda.
+
+Beslut & Konsekvens: Vi övergav den ursprungliga planen med ett lokalt Windows-program (tkinter). Detta ledde till valet av molnplattformar (först Colab, sedan Hugging Face/Replit, och slutligen Streamlit Cloud) och introducerade det komplexa men nödvändiga kravet på säker webb-autentisering (OAuth 2.0).
+
+## Tilläggs-plan B: Byte av UI-bibliotek - Från Gradio till Streamlit ##
+Syfte: Att lösa de ihållande och blockerande tekniska felen (OSError: Cannot find empty port och NameError) som gjorde att applikationen inte kunde starta pålitligt på varken Hugging Face eller Replit.
+
+Krav: Applikationen måste kunna starta och köras stabilt i en gratis molnmiljö.
+
+Beslut & Konsekvens: Vi konstaterade att Gradio-biblioteket var grundorsaken till konflikterna. Vi tog det drastiska men nödvändiga beslutet att byta ut hela gränssnitts-biblioteket mot dess konkurrent, Streamlit. Detta krävde en fullständig omskrivning av all UI-kod (main.py) men resulterade i en applikation som är bevisat stabil och fungerande.
+
+## Tilläggs-plan C: Förbättrad Användarupplevelse - Från Textfält till Grafisk Filbläddrare ##
+Syfte: Att eliminera felkällan med manuellt inskrivna sökvägar och skapa en mer intuitiv, feltolerant och igenkännbar navigering för användaren.
+
+Krav: Användaren ska kunna klicka sig fram till sin mapp istället för att skriva eller klistra in en teknisk sökväg. Lösningen måste kunna hantera både "Min enhet" och "Delade enheter".
+
+Beslut & Konsekvens: Textfältet för sökvägar ersattes med en specialbyggd filbläddrare i sidopanelen. Detta gjordes med dynamiskt skapade st.button-element för varje mapp och en "lobby" för att välja start-enhet. Detta gjorde pdf_motor.py mer komplex (krävde funktioner för att lista enheter och mappar separat) men gjorde appen oerhört mycket mer användarvänlig och professionell.
+
+## Tilläggs-plan D: Förbättrad Visualisering - Från Ikoner till Inbäddade Miniatyrer ##
+Syfte: Att skapa en mer informativ och visuellt tilltalande "storyboard"-vy som bättre representerar det slutgiltiga resultatet.
+
+Krav: Den visuella listan ska visa en riktig förhandsvisning av PDF-sidors innehåll, inte bara en generisk ikon. Miniatyrbilder (både från bilder och PDF-filer) ska behålla sitt ursprungliga bildförhållande för att ge en mer rättvisande förhandsvisning.
+
+Beslut & Konsekvens: Vi övergav den separata "Förhandsgransknings"-dialogen. Istället implementerades logik med PyMuPDF i pdf_motor.py för att rendera PDF-sidornas första sida som bilder. Dessa bilder visas nu direkt i huvudlistan med st.image. Detta förbättrade användarupplevelsen avsevärt, till det medvetna priset av något längre laddningstid för listan.
+
+## Tilläggs-plan E: Layout med Fast Sidopanel ##
+Syfte: Att lösa problemet med antingen en enda lång, rullande sida där kontrollerna försvinner, eller en förvirrande "nästlad" layout med dubbla rullister.
+
+Krav: Kontrollpanelen med filbläddrare och verktyg ska alltid vara synlig och tillgänglig, oberoende av hur lång den visuella fillistan är. Huvudfönstret ska inte ha en egen rullist.
+
+Beslut & Konsekvens: Vi övergav den buggiga två-kolumnslayouten (st.columns) och implementerade istället Streamlits inbyggda och robusta st.sidebar. Detta skapade en permanent synlig, oberoende och scrollbar sidopanel för alla kontroller, och en separat, scrollbar huvudvy för berättelsens innehåll. Layouten blev därmed professionell och lättnavigerad.
+
+## Tilläggs-plan F: Positionell Infogning av Text ##
+Syfte: Att ge användaren precis kontroll över var nyskapat textinnehåll hamnar i berättelselistan.
+
+Krav: En användare måste kunna infoga en ny textfil antingen före eller efter ett specifikt, redan existerande objekt i listan, inte bara i slutet.
+
+Beslut & Konsekvens: Vi implementerade en kontextkänslig funktion. När användaren är i "Organisera-läget" och har markerat exakt en rad i listan, dyker de nya knapparna "Infoga text före" och "Infoga text efter" upp i verktygspanelen. Detta ger precis och omedelbar kontroll och gör "Klipp ut & Klistra in" till ett andrahandsval för att flytta texten.
+
+## Tilläggs-plan G: Konfigurerbara PDF-marginaler ##
+Syfte: Att ge användaren kreativ kontroll över de slutgiltiga PDF-filernas layout.
+
+Krav: Användaren ska kunna välja om bilder och text ska ha en vit marginal runt sig eller om de ska fylla hela sidans bredd.
+
+Beslut & Konsekvens: Vi lade till en inställning i gränssnittet, "Marginal runt innehåll (mm)". Värdet sattes till 0.0 som standard, enligt Sandras önskemål, för att ge möjligheten till utfallande bilder. Detta gjorde PDF-genereringsmotorn mer flexibel.
+
+## Tilläggs-plan H: Professionell Kodhantering (Branching) ##
+Syfte: Att skydda den fungerande, stabila versionen av programmet från att påverkas av utvecklingen av nya, potentiellt instabila funktioner.
+
+Krav: Det måste finnas en säker "originalversion" och en separat "arbetsversion".
+
+Beslut & Konsekvens: Vi adopterade en standard-arbetsmetod från professionell utveckling. Vi skapade en main-gren på GitHub för den stabila, publika versionen, och en utveckling-gren för allt nyskapande och testning. Detta ledde också till att vi skapade två separata, körbara appar på Streamlit Cloud, en för varje gren, vilket ger en extremt säker och organiserad utvecklingsmiljö.
+
+
+
+
+# Process-plan I: Felsäker Kod-leverans (Kedje-promptning) #
+Syfte: Att skapa en maximalt säker, pålitlig och verifierbar metod för att överföra komplex, komplett källkod från AI-assistenten till användaren. Målet är att helt eliminera de kopierings-, formaterings- och kontextfel ("utspädning") som uppstod med tidigare metoder.
+
+Krav:
+
+Koden måste levereras i små, logiska, självständiga sektioner.
+
+Användaren måste kunna verifiera varje sektion innan nästa levereras.
+
+AI-assistenten måste tvingas att bibehålla en perfekt kontext av den kod som redan har skrivits.
+
+Koden som skrivs ut i varje sektion måste vara komplett och får inte förkortas med ... eller liknande.
+
+Beslut & Metod (Den process du designade):
+
+Nystart: Processen för en ny fil börjar alltid med att användaren skapar en tom fil.
+
+Start-paket: Assistenten levererar ett "start-paket" som består av tre delar i ordning:
+a. Prompt före koden
+b. KOD (Del 1 av X)
+c. Prompt efter koden
+
+Användarens Återkoppling: För att begära nästa del, skapar användaren en ny prompt genom att exakt kopiera och klistra in Prompt före koden, följt av all kod som har genererats hittills, följt av Prompt efter koden.
+
+Assistentens Fortsättning: När assistenten tar emot denna kompletta prompt, fortsätter den att generera nästa logiska, kompletta kodsektion och paketerar den på samma sätt.
+
+Avslutning: Processen upprepas tills hela filen är utskriven. När den sista delen har levererats, meddelar assistenten att filen är komplett. Den villkorliga Om du inte skrev ut det sista...-prompten agerar som en naturlig stopp-signal.
+
+Processen upprepas därefter för nästa fil som ska ändras i fasen.
+
