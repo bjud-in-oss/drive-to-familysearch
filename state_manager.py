@@ -17,8 +17,10 @@ def initialize_state():
         'clipboard': [], 
         'quick_sort_mode': False, 
         'unsorted_items': [],
-        'show_text_modal': False, # NY: Styr om text-formuläret ska visas
-        'text_insert_index': None   # NY: Håller reda på var texten ska in
+        'show_text_modal': False,
+        'text_insert_index': None,
+        'run_pdf_generation': False, # NY: Flagga för att starta generering
+        'generated_pdfs': []        # NY: Lista för att hålla de färdiga PDF-filerna
     }
     for key, value in defaults.items():
         if key not in st.session_state:
